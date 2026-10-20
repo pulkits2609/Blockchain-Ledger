@@ -36,4 +36,3 @@ export function VerificationReport({ report, busy = false }) {
     </div>
   </div>;
 }
-

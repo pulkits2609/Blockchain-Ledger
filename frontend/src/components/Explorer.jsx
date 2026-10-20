@@ -70,4 +70,3 @@ export default function Explorer({ blocks, verification, connection, selectedInd
     </section><BlockDetail block={selectedBlock} connected={online}/></div>
   </>;
 }
-

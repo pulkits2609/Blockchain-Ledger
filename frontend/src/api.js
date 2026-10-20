@@ -64,4 +64,3 @@ export function useLedger() {
 
   return { ledger, connection, error, lastReceived, refresh: () => setRefreshKey(value => value + 1) };
 }
-
