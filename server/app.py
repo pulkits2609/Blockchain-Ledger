@@ -1,4 +1,4 @@
-"""Run with python server/app.py. Only the standard library is required."""
+"""Run with python server/app.py after installing server/requirements.txt."""
 
 import argparse
 import json
@@ -6,18 +6,24 @@ import mimetypes
 import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from ledger import Ledger, LedgerConflict, MAX_BODY_BYTES, parse_json, read_existing_ledger, verify_chain
+from snapshots import MAX_SNAPSHOT_BYTES, Snapshots
 
 
 class LedgerServer(ThreadingHTTPServer):
     # Finish active requests before releasing the writer lock on shutdown.
     daemon_threads = False
 
-    def __init__(self, address, ledger, frontend):
+    def __init__(self, address, ledger, frontend, allowed_hosts=None):
         self.ledger = ledger
         self.frontend = Path(frontend).resolve()
+        self.allowed_hosts = {"localhost", "127.0.0.1", "::1"}
+        self.allowed_hosts.update(host.lower() for host in (allowed_hosts or []))
+        if address[0] not in ("0.0.0.0", "::"):
+            self.allowed_hosts.add(address[0].lower())
+        self.snapshots = Snapshots(ledger)
         super().__init__(address, Handler)
 
 
@@ -37,26 +43,39 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def local_request(self):
-        # Local-only browser access prevents another website writing to localhost.
-        host = self.headers.get("Host", "")
+        # Explicit host names preserve DNS-rebinding protection when serving LAN clients.
         try:
-            hostname = urlsplit("http://" + host).hostname
-        except ValueError:
-            return False
-        if hostname not in ("127.0.0.1", "localhost", "::1"):
-            return False
-        origin = self.headers.get("Origin")
-        if origin is None:
-            return True  # Command-line integrations need no browser Origin header.
-        try:
+            hosts = self.headers.get_all("Host", [])
+            if len(hosts) != 1:
+                return False
+            host = urlsplit("http://" + hosts[0])
+            if host.path or host.query or host.fragment:
+                return False
+            if host.hostname not in self.server.allowed_hosts or host.username or host.password:
+                return False
+            host_port = host.port
+            if host_port is None:
+                host_port = 80
+            if host_port != self.server.server_port:
+                return False
+            origin = self.headers.get("Origin")
+            if origin is None:
+                return True  # Native GFX and command-line requests have no browser Origin.
             parsed = urlsplit(origin)
-            allowed_ports = (5173, self.server.server_port)
-            return (parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost", "::1")
-                    and parsed.port in allowed_ports and not parsed.username and not parsed.path)
+            if parsed.scheme != "http" or parsed.username or parsed.password:
+                return False
+            if parsed.path or parsed.query or parsed.fragment:
+                return False
+            origin_port = parsed.port
+            if origin_port is None:
+                origin_port = 80
+            same_server = parsed.hostname == host.hostname and origin_port == self.server.server_port
+            local_development = parsed.hostname in ("localhost", "127.0.0.1", "::1") and parsed.port == 5173
+            return same_server or local_development
         except ValueError:
             return False
 
-    def read_body(self):
+    def read_body(self, maximum=MAX_BODY_BYTES, content_type="application/json"):
         if self.headers.get("Transfer-Encoding"):
             raise ValueError("Transfer-Encoding is not supported")
         content_lengths = self.headers.get_all("Content-Length", [])
@@ -66,22 +85,31 @@ class Handler(BaseHTTPRequestHandler):
             length = int(content_lengths[0])
         except ValueError:
             raise ValueError("Invalid Content-Length")
-        if length < 0 or length > MAX_BODY_BYTES:
-            raise OverflowError("Request body exceeds 64 KiB")
-        if self.headers.get_content_type() != "application/json":
-            raise ValueError("Content-Type must be application/json")
+        if length < 0 or length > maximum:
+            raise OverflowError("Request body exceeds the allowed size")
+        if self.headers.get_content_type() != content_type:
+            raise ValueError("Content-Type must be " + content_type)
         body = self.rfile.read(length)
         if len(body) != length:
             raise ValueError("Incomplete request body")
-        return parse_json(body)
+        if content_type == "application/json":
+            return parse_json(body)
+        return body
 
     def do_POST(self):
         if not self.local_request():
-            self.send_json(403, {"error": "Only local hosts and approved browser origins are allowed"})
+            self.send_json(403, {"error": "Only approved hosts and browser origins are allowed"})
             return
         try:
-            value = self.read_body()
             path = urlsplit(self.path).path
+            if path == "/api/validate-snapshot":
+                try:
+                    token = self.read_body(MAX_SNAPSHOT_BYTES, "application/octet-stream")
+                except OverflowError as error:
+                    raise ValueError(str(error)) from None
+                self.send_json(200, self.server.snapshots.validate(token))
+                return
+            value = self.read_body()
             if path == "/api/blocks":
                 block, duplicate = self.server.ledger.append_result(value)
                 self.send_json(200 if duplicate else 201, {"block": block, "duplicate": duplicate})
@@ -109,10 +137,36 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if not self.local_request():
-            self.send_json(403, {"error": "Only local hosts and approved browser origins are allowed"})
+            self.send_json(403, {"error": "Only approved hosts and browser origins are allowed"})
             return
         path = urlsplit(self.path).path
-        if path == "/api/ledger":
+        if path == "/api/snapshot":
+            try:
+                query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                block_index = None
+                if query:
+                    if set(query) != {"block"} or len(query["block"]) != 1:
+                        raise ValueError("Expected one block index")
+                    text = query["block"][0]
+                    if not text.isascii() or not text.isdecimal():
+                        raise ValueError("Block index must be a nonnegative integer")
+                    block_index = int(text)
+                token, index = self.server.snapshots.export(block_index)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(len(token)))
+                self.send_header("Content-Disposition", 'attachment; filename="ledger-' + str(index) + '.ledger"')
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                self.wfile.write(token)
+            except LedgerConflict as error:
+                self.send_json(409, {"error": str(error)})
+            except (ValueError, OverflowError) as error:
+                self.send_json(400, {"error": str(error)})
+            except OSError:
+                self.send_json(503, {"error": "Storage operation failed"})
+        elif path == "/api/ledger":
             self.send_json(200, self.server.ledger.view())
         elif path == "/api/checkpoint":
             view = self.server.ledger.view()
@@ -149,9 +203,23 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
+def seed_demo(ledger):
+    """Opt-in examples use stable IDs, so restarting never duplicates the matches."""
+    for number in range(1, 5):
+        ledger.append_result({"match_id": "DEMO-MATCH-" + str(number).zfill(3),
+                              "data": {"demo": True, "label": "Demo match " + str(number),
+                                       "duration_seconds": 180, "winning_team": 1,
+                                       "team_scores": [number + 3, number + 2],
+                                       "players": [{"name": "Player 1", "team": 1, "kills": number + 3, "deaths": number + 2},
+                                                   {"name": "Player 2", "team": 2, "kills": number + 2, "deaths": number + 3}]}})
+
+
 def main():
     parser = argparse.ArgumentParser(description="Local match-result ledger and viewer API")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--bind", default="127.0.0.1", help="Listening IP; use 0.0.0.0 for trusted LAN access")
+    parser.add_argument("--allow-host", action="append", default=[], help="Explicit remote-facing hostname or IP; repeat if needed")
+    parser.add_argument("--seed-demo", action="store_true", help="Append four labelled test matches without replacing records")
     parser.add_argument("--data-dir", default=str(Path(__file__).parent / "data"))
     parser.add_argument("--verify", action="store_true", help="Verify saved records and exit without starting HTTP")
     args = parser.parse_args()
@@ -162,9 +230,11 @@ def main():
         return 0 if report["valid"] else 1
     ledger = Ledger(args.data_dir)
     try:
+        if args.seed_demo:
+            seed_demo(ledger)
         frontend = Path(__file__).resolve().parents[1] / "frontend" / "dist"
-        server = LedgerServer(("127.0.0.1", args.port), ledger, frontend)
-        print("Ledger server: http://127.0.0.1:" + str(server.server_port), flush=True)
+        server = LedgerServer((args.bind, args.port), ledger, frontend, args.allow_host)
+        print("Ledger server: http://" + args.bind + ":" + str(server.server_port), flush=True)
         try:
             server.serve_forever()
         except KeyboardInterrupt:

@@ -9,6 +9,12 @@ if errorlevel 1 (
     exit /b 1
 )
 
+python -c "from cryptography.fernet import Fernet" >nul 2>nul
+if errorlevel 1 (
+    python -m pip install -r server\requirements.txt
+    if errorlevel 1 exit /b 1
+)
+
 if not exist "frontend\dist\index.html" (
     where npm.cmd >nul 2>nul
     if errorlevel 1 (
@@ -24,6 +30,6 @@ if not exist "frontend\dist\index.html" (
     if errorlevel 1 exit /b 1
 )
 
-echo Open http://127.0.0.1:8000 after the server starts.
-python server\app.py
+echo Open the address printed by the server, normally http://127.0.0.1:8000.
+python server\app.py %*
 pause
