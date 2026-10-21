@@ -1,13 +1,19 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiRequest, downloadSnapshot } from '../api.js';
 
 const MaximumSnapshotBytes = 8 * 1024 * 1024;
 
-export default function SnapshotControls({ connected, canDownload }) {
+export default function SnapshotControls({ connected, canDownload, headHash }) {
   const fileInput = useRef(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [report, setReport] = useState(null);
+
+  // A past comparison is not a fresh verdict after the server changes or disconnects.
+  useEffect(() => {
+    setReport(null);
+    setError('');
+  }, [connected, canDownload, headHash]);
 
   async function download() {
     setBusy('download');

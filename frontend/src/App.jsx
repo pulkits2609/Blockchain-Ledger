@@ -21,7 +21,7 @@ export default function App() {
   return <main className="ledger-page">
     <header className="toolbar">
       <div className="heading"><h1>Ledger</h1><span className={`live-status ${connected && !invalid ? 'live' : ''}`} role="status"><i/>{status}</span></div>
-      <SnapshotControls connected={connected} canDownload={connected && !invalid}/>
+      <SnapshotControls connected={connected} canDownload={connected && !invalid} headHash={ledger?.verification?.head_hash}/>
     </header>
     <p className="chain-note">{blocks.length} blocks · click a block to open it<span>Downloads are encrypted. The server validates your saved copy.</span></p>
     {connection === 'offline' && <div className="notice warning" role="alert"><p>{error} {lastReceived && `Last received ${lastReceived.toLocaleTimeString()}.`}</p><button onClick={refresh}>Reconnect</button></div>}
