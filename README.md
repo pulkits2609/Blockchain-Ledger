@@ -1,7 +1,8 @@
 # blockchainLedger
 
-A standalone college prototype: a React block explorer and a Python SHA-256
-hash-linked ledger. GFX does not import or depend on this project.
+A standalone college prototype: a React chain viewer and a Python SHA-256
+hash-linked ledger. GFX can optionally POST a finished match result; it does not
+import ledger code or need the ledger to play a match.
 
 This is a centralized, single-writer ledger. Hash verification checks consistency;
 it does not prove who submitted a result or stop an owner rebuilding history.
@@ -11,19 +12,36 @@ it does not prove who submitted a result or stop an owner rebuilding history.
 Requirements: Python 3.11+ and Node.js 22.12+ for building the frontend.
 
 On Windows, double-click **Start Ledger.bat**, then open http://127.0.0.1:8000.
-The launcher installs locked frontend dependencies and builds the viewer if its
-build is missing. Python serves both the built React app and its API.
+The launcher installs the Python encryption dependency if missing, installs locked
+frontend dependencies and builds the viewer if its build is missing. Python serves
+both the built React app and its API.
 
 Or run these commands from this project folder:
 
 ```powershell
 npm.cmd --prefix frontend ci
 npm.cmd --prefix frontend run build
+python -m pip install -r server/requirements.txt
 python server/app.py
 ```
 
-On Linux, use `npm` and `python3` instead. No Python packages need installing.
+On Linux, use `npm` and `python3` instead. The pinned `cryptography` dependency
+provides authenticated encryption; the HTTP server and ledger use standard Python.
 After editing frontend source, run the build command again.
+
+For the requested four test matches, use **Start Demo Ledger.bat** or:
+
+```powershell
+python server/app.py --seed-demo
+```
+
+This appends four labelled `DEMO-MATCH-*` records once, preserving existing data.
+Restarting with this flag does not duplicate them. Normal startup adds no samples.
+
+The viewer contains just a wrapping chain and a few controls. Hover or focus a
+block to lift it, and click to expand its read-only data beneath its row. The
+download controls save encrypted `.ledger` files. **Validate file** compares a
+previous download against the current server without importing or changing it.
 
 For frontend development, keep `python server/app.py` running, then use a second
 terminal:
@@ -61,7 +79,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/blocks `
 ```
 
 The browser refreshes from the server every 1.5 seconds. It does not need to be
-open when submitting. Its **New result** form uses the same API.
+open when submitting. Entries are created through the API, not by editing cards.
 
 - A new match returns HTTP 201 and `{ "block": ..., "duplicate": false }`.
 - Retrying the same ID and data returns the existing block with HTTP 200.
@@ -81,9 +99,45 @@ The additional routes only read or verify:
 | `POST /api/verify` with `{}` | Verify the saved ledger |
 | `POST /api/verify` with `{ "blocks": [...] }` | Verify a supplied copy without saving it |
 | `GET /api/checkpoint` | Export the current valid head's index and hash |
+| `GET /api/snapshot` | Download the current ledger as an encrypted file |
+| `GET /api/snapshot?block=2` | Download only block 2 as an encrypted file |
+| `POST /api/validate-snapshot` | Send raw `.ledger` bytes as `application/octet-stream` to compare saved records with the server |
 
 This initial API binds to localhost for a trusted local demonstration. It is not
 a public authenticated result service. Nothing is deployed or port-forwarded.
+
+For a GFX host on another trusted LAN computer, explicitly listen on the network
+and allow the ledger address that the host will enter. Replace this example IP:
+
+```powershell
+python server/app.py --bind 0.0.0.0 --port 8000 --allow-host 192.168.1.20
+```
+
+Use ledger address `192.168.1.20` and port `8000` in GFX's host-only results panel.
+Repeat `--allow-host` for additional IPs or hostnames. The normal loopback address
+needs no extra flag. This is plain HTTP for trusted testing, without user accounts.
+
+## Encrypted downloads
+
+Downloads use Fernet authenticated encryption. The algorithm is public; the secret
+key stays in `server/data/snapshot.key` (or your selected data directory). That key
+is never included in API responses or frontend assets and is ignored by Git.
+Keep a protected backup of it together with the ledger. Losing or changing the
+key makes older downloads unreadable by this server. An invalid key is not silently
+replaced.
+
+A user can change bytes in a downloaded file, but changed files fail validation.
+Validation first checks the encrypted file's authenticity, then the saved hashes
+and links, and finally compares every saved record with the server's current
+record at that position. A complete-ledger download remains valid after newer
+blocks are appended; the response reports how many new blocks follow it. A
+single-block file checks that one record against the current valid server chain.
+Rewritten or missing saved history fails comparison. No validation call overwrites
+server data. Files are limited to 8 MiB; individual downloads help with larger
+ledgers.
+
+Encryption authenticates a server-issued download, not the truth of submitted
+scores. The trusted-server and external-checkpoint limitations still apply.
 
 ## Storage and verification
 
@@ -115,8 +169,7 @@ python server/app.py --verify
 python server/app.py --verify --data-dir C:/GFXData/ledger
 ```
 
-The CLI is read-only and exits nonzero for an invalid or missing ledger. The
-Verification lab checks edited copies without changing the stored chain.
+The CLI is read-only and exits nonzero for an invalid or missing ledger.
 Export a checkpoint to retain a fingerprint elsewhere. Internal validity alone
 cannot reveal a fully rewritten chain or deletion of a complete final suffix;
 that needs comparison with a previously trusted external checkpoint.
@@ -126,7 +179,8 @@ that needs comparison with a previously trusted external checkpoint.
 ```text
 frontend/src/      React screens, API calls and styles
 server/ledger.py   Familiar block/hash/verify functions and JSONL storage
-server/app.py      Local HTTP routes, static viewer serving and verification CLI
+server/app.py      HTTP routes, static viewer serving, demo seeding and verification CLI
+server/snapshots.py  Server-only encryption key, downloads and file comparison
 server/test_ledger.py  Storage, verification and real HTTP tests using temporary data
 ```
 
@@ -135,6 +189,8 @@ python -m unittest discover -s server -v
 npm.cmd --prefix frontend run build
 ```
 
-The first run starts with genesis only. No example matches are silently added.
-GFX integration, result authentication and distributed consensus are not part of
-this first standalone viewer/API build.
+The first normal run starts with genesis only. Demo records require --seed-demo.
+GFX's optional upload is initiated only by the lobby host after completion and
+sends the server's finalized JSON. Disabling GFX_ENABLE_LEDGER_UPLOAD at build
+time removes that client feature. There is no automatic dependency on a running
+ledger, and no changes to match simulation, combat or voice.
