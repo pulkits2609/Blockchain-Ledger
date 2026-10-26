@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react';
 import { apiRequest, ledgerPath } from '../api.js';
 import { LedgerRows } from './LedgerList.jsx';
 import CreateLedger from './CreateLedger.jsx';
+import { exampleData } from '../requestExample.js';
 
 function Integration({ ledger, initial, onClose }) {
   const [details, setDetails] = useState(initial || null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [includeOptional, setIncludeOptional] = useState(false);
   useEffect(() => {
     if (initial) return undefined;
     const controller = new AbortController();
@@ -35,7 +37,14 @@ function Integration({ ledger, initial, onClose }) {
     {error && <p className="inline-error" role="alert">{error}</p>}
     {endpoint && <label>Write endpoint<input readOnly value={endpoint}/></label>}
     {details?.write_token ? <><p className="notice warning">Save this token now. It is shown only until you close this panel. It is not saved in browser storage.</p><label>Bearer token<textarea readOnly spellCheck="false" value={details.write_token}/></label></> : details && <p className="muted">The saved token cannot be retrieved. {details.token_hint && `Hint: ${details.token_hint}`} Rotate it if you have lost it.</p>}
-    {endpoint && <details><summary>Request format</summary><p>Send JSON using your secret token as the Authorization header. The data object must follow the ledger’s fixed structure.</p><pre>{`POST ${endpoint}\nAuthorization: Bearer YOUR_SECRET_TOKEN\nContent-Type: application/json\n\n${JSON.stringify({ match_id: 'record-001', data: Object.fromEntries((ledger.fields || []).map(field => [field.name, field.type === 'integer' ? 1 : field.type === 'boolean' ? true : field.type === 'object' ? {} : field.type === 'array' ? [] : 'example'])) }, null, 2)}`}</pre></details>}
+    {endpoint && <details><summary>Request format</summary>
+      <p>Send your ledger fields directly as JSON. No match_id or data wrapper is required; the server generates the record ID.</p>
+      <ul>{(ledger.fields || []).map(field => <li key={field.name}><code>{field.name}</code> · {field.type} · {field.required === false ? 'Optional — may be omitted' : 'Required'}</li>)}</ul>
+      <p>Optional fields must have the correct type when included. Unknown fields are rejected.</p>
+      <label className="check-label"><input type="checkbox" checked={includeOptional} onChange={event => setIncludeOptional(event.target.checked)}/>Include optional fields in example</label>
+      <pre>{`POST ${endpoint}\nAuthorization: Bearer YOUR_SECRET_TOKEN\nContent-Type: application/json\n\n${JSON.stringify(exampleData(ledger.fields, includeOptional), null, 2)}`}</pre>
+      <p>For safe retries, add an optional <code>Idempotency-Key</code> header and reuse its value only for the same record. Without it, each accepted request creates a new record.</p>
+    </details>}
     <button disabled={busy || !details} onClick={rotate}>{busy ? 'Replacing…' : 'Rotate write token'}</button>
   </section>;
 }

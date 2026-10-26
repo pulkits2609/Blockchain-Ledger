@@ -283,7 +283,11 @@ class WebHandler(BaseHTTPRequestHandler):
                 if len(authorization) != 1 or not authorization[0].startswith("Bearer "):
                     raise HttpError(401, "A ledger bearer token is required")
                 token = authorization[0][7:]
-                block, duplicate = self.server.store.append(ledger_id, token, self.body())
+                identifiers = self.headers.get_all("Idempotency-Key", [])
+                if len(identifiers) > 1:
+                    raise ValueError("Send at most one Idempotency-Key header")
+                record_id = identifiers[0] if identifiers else None
+                block, duplicate = self.server.store.append(ledger_id, token, self.body(), record_id=record_id)
                 return self.send_json(200 if duplicate else 201, {"block": block, "duplicate": duplicate})
             if method == "GET" and operation == "checkpoint":
                 view = self.server.store.read(ledger_id)

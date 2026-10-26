@@ -154,6 +154,37 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.request("POST", "/api/logout", {}, cookie, csrf)[0], 200)
         self.assertEqual(self.request("GET", "/api/my-ledgers", cookie=cookie)[0], 401)
 
+    def test_flat_custom_fields_and_optional_values(self):
+        _, cookie, csrf = self.register()
+        fields = [{"name": "body", "type": "string", "required": True},
+                  {"name": "note", "type": "string", "required": False}]
+        status, created, _ = self.request("POST", "/api/ledgers", {"name": "Messages", "description": "", "fields": fields}, cookie, csrf)
+        self.assertEqual(status, 201)
+        self.ledgers.append(created["ledger"]["id"])
+        path = created["write_path"]
+        token = created["write_token"]
+        status, result, _ = self.request("POST", path, {"body": "hello"}, token=token)
+        self.assertEqual(status, 201, result)
+        self.assertEqual(result["block"]["data"], {"body": "hello"})
+        self.assertTrue(result["block"]["match_id"].startswith("record-"))
+        self.assertEqual(self.request("POST", path, {"body": "hello", "note": "optional"}, token=token)[0], 201)
+        for invalid in ({}, {"body": True}, {"body": "hello", "note": None}, {"body": "hello", "other": 1}):
+            self.assertEqual(self.request("POST", path, invalid, token=token)[0], 400)
+        for key in ("", "with spaces", "genesis"):
+            self.assertEqual(self.request("POST", path, {"body": "hello"}, token=token, headers={"Idempotency-Key": key})[0], 400)
+        header = {"Idempotency-Key": "retry-message-1"}
+        self.assertEqual(self.request("POST", path, {"body": "hello"}, token=token, headers=header)[0], 201)
+        self.assertEqual(self.request("POST", path, {"body": "hello"}, token=token, headers=header)[0], 200)
+        self.assertEqual(self.request("POST", path, {"body": "changed"}, token=token, headers=header)[0], 409)
+        legacy = {"match_id": "old-client-1", "data": {"body": "legacy format"}}
+        self.assertEqual(self.request("POST", path, legacy, token=token)[0], 201)
+        before = self.store.get_ledger(created["ledger"]["id"])["block_count"]
+        for invalid in ({"body": "bad\x00value"}, {"match_id": "bad\x00id", "data": {"body": "hello"}}):
+            self.assertEqual(self.request("POST", path, invalid, token=token)[0], 400)
+        self.assertEqual(self.request("POST", path, {"match_id": "with spaces", "data": {"body": "hello"}},
+                                      token=token, headers={"Idempotency-Key": "with spaces"})[0], 400)
+        self.assertEqual(self.store.get_ledger(created["ledger"]["id"])["block_count"], before)
+
     def test_admin_states_deletion_and_single_account(self):
         username = "admin_" + uuid.uuid4().hex[:12]
         admin, created = self.accounts.initialize_admin(username, PASSWORD)

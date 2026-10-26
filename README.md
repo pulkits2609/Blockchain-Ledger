@@ -194,8 +194,9 @@ sudo journalctl -u blockchain-ledger -f
 
 The creator receives a per-ledger path and a bearer token when the ledger is
 created. Use the displayed path, rather than the old shared `/api/blocks` route.
-The request still contains an idempotent record identifier called `match_id` for
-compatibility with the original data format; it need not describe a game match.
+Send the ledger's fields directly in the JSON body. Required fields must be
+present; optional fields may be omitted. Included fields must have the declared
+type, and unknown fields are rejected. No `match_id` or `data` wrapper is required.
 
 ```http
 POST /api/ledgers/LEDGER_ID/blocks HTTP/1.1
@@ -204,14 +205,21 @@ Authorization: Bearer YOUR_PRIVATE_WRITE_TOKEN
 Content-Type: application/json
 
 {
-  "match_id": "RECORD-001",
-  "data": { "winner": "Team 1", "scores": [8, 5], "duration_seconds": 180 }
+  "winner": "Team 1",
+  "scores": [8, 5],
+  "duration_seconds": 180
 }
 ```
 
-Send it over the configured HTTPS origin. A new record returns HTTP 201. Retrying
-the same identifier and data returns the existing block with HTTP 200; different
-data for that identifier produces a conflict. Invalid schema data, invalid tokens
+Send it over the configured HTTPS origin. A new record returns HTTP 201 and the
+server generates its internal record ID. For retry safety, optionally send an
+`Idempotency-Key` header (1–128 printable ASCII characters without spaces).
+The same key and data return the existing block with HTTP 200; different
+data for that key produce a conflict. Without the header, each accepted request
+creates a new record. The older `{ "match_id": "...", "data": {...} }` format
+remains supported for schemas without custom `match_id`/`data` fields; such custom
+field names are interpreted as ordinary direct data instead of a transport wrapper.
+Invalid schema data, invalid tokens
 and writes to a non-active ledger are rejected without appending.
 
 The server owns indexes, timestamps, previous hashes and record hashes. The token

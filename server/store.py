@@ -12,7 +12,7 @@ from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from field_schema import validate_data, validate_fields
+from field_schema import validate_data, validate_fields, reject_nul
 from ledger import (LedgerConflict, MAX_BODY_BYTES, calculate_hash, canonical_json,
                     create_genesis_block, create_new_block, validate_submission, verify_chain)
 
@@ -42,6 +42,29 @@ def table_names(ledger_id):
 
 def token_hash(token):
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def prepare_submission(value, fields, record_id=None):
+    """Clients send their schema fields directly; the old game envelope still works."""
+    if record_id is not None:
+        if not isinstance(record_id, str) or not 1 <= len(record_id) <= 128 or not record_id.isascii() or any(ord(c) < 33 or ord(c) > 126 for c in record_id):
+            raise ValueError("Idempotency-Key must contain 1–128 printable characters without spaces")
+    reject_nul(value)
+    names = {field["name"] for field in fields}
+    legacy_envelope = isinstance(value, dict) and set(value) == {"match_id", "data"}
+    # A custom field called data/match_id belongs to the user, not our transport.
+    legacy_envelope = legacy_envelope and not names.intersection({"match_id", "data"})
+    if legacy_envelope:
+        validate_submission(value)
+        validate_data(value["data"], fields)
+        if record_id is not None and record_id != value["match_id"]:
+            raise ValueError("Idempotency-Key must match match_id when using the legacy envelope")
+        return value
+    validate_data(value, fields)
+    submission = {"match_id": record_id if record_id is not None else "record-" + uuid.uuid4().hex,
+                  "data": value}
+    validate_submission(submission)
+    return submission
 
 
 def ledger_genesis(ledger_id, fields):
@@ -218,8 +241,7 @@ class Store:
                 raise LedgerConflict("The ledger snapshot key is missing; restore it from a backup")
             return row["snapshot_key"].encode("ascii")
 
-    def append(self, ledger_id, token, submission):
-        validate_submission(submission)
+    def append(self, ledger_id, token, submission, record_id=None):
         if len(canonical_json(submission)) > MAX_BODY_BYTES:
             raise ValueError("Submission is too large")
         with self.connect() as connection:
@@ -228,7 +250,7 @@ class Store:
                 raise StoreForbidden("Invalid ledger write token")
             if row["state"] != "active":
                 raise LedgerConflict("This ledger does not accept new blocks in its current state")
-            validate_data(submission["data"], row["fields"])
+            submission = prepare_submission(submission, row["fields"], record_id)
             blocks = self._blocks(connection, ledger_id)
             if not verify_ledger(blocks, row)["valid"]:
                 raise LedgerConflict("Ledger verification failed; no data was changed")

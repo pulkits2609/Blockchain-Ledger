@@ -13,7 +13,7 @@ from psycopg.types.json import Jsonb
 from field_schema import validate_data, validate_fields
 from ledger import LedgerConflict, calculate_hash, create_new_block
 from multi_snapshots import SnapshotService
-from store import Store, StoreForbidden, StoreNotFound, ledger_genesis, table_names, verify_ledger
+from store import Store, StoreForbidden, StoreNotFound, ledger_genesis, table_names, verify_ledger, prepare_submission
 
 
 FIELDS = [{"name": "score", "type": "integer", "required": True},
@@ -21,6 +21,37 @@ FIELDS = [{"name": "score", "type": "integer", "required": True},
 
 
 class FieldTests(unittest.TestCase):
+    def test_direct_fields_optional_omission_and_legacy_format(self):
+        fields = [{"name": "body", "type": "string", "required": True},
+                  {"name": "note", "type": "string", "required": False}]
+        first = prepare_submission({"body": "hello"}, fields)
+        self.assertEqual(first["data"], {"body": "hello"})
+        self.assertNotEqual(first["match_id"], prepare_submission({"body": "hello"}, fields)["match_id"])
+        self.assertEqual(prepare_submission({"body": "hello"}, fields, "retry-1")["match_id"], "retry-1")
+        for invalid in ({}, {"body": 4}, {"body": "hello", "note": 4}, {"body": "hello", "extra": 1}):
+            with self.assertRaises(ValueError):
+                prepare_submission(invalid, fields)
+        legacy = {"match_id": "old-client", "data": {"body": "hello"}}
+        self.assertEqual(prepare_submission(legacy, fields), legacy)
+        for identifier in ("with spaces", "\u00e9", "", "x" * 129):
+            with self.assertRaises(ValueError):
+                prepare_submission({"match_id": identifier, "data": {"body": "hello"}}, fields, identifier)
+        for invalid in ({"body": "hello\x00world"}, {"match_id": "bad\x00id", "data": {"body": "hello"}}):
+            with self.assertRaises(ValueError):
+                prepare_submission(invalid, fields)
+        nested_fields = [{"name": "payload", "type": "object", "required": True}]
+        for payload in ({"nested": ["bad\x00text"]}, {"bad\x00key": "value"}):
+            with self.assertRaises(ValueError):
+                prepare_submission({"payload": payload}, nested_fields)
+        with self.assertRaises(ValueError):
+            prepare_submission(legacy, fields, "different-id")
+        optional = [{"name": "body", "type": "string", "required": False}]
+        self.assertEqual(prepare_submission({}, optional)["data"], {})
+        reserved = [{"name": "match_id", "type": "string", "required": True},
+                    {"name": "data", "type": "object", "required": True}]
+        self.assertEqual(prepare_submission({"match_id": "user-field", "data": {}}, reserved)["data"],
+                         {"match_id": "user-field", "data": {}})
+
     def test_fixed_fields_and_strict_types(self):
         fields = validate_fields(FIELDS)
         validate_data({"score": 7}, fields)

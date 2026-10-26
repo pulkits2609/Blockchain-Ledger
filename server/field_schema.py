@@ -9,6 +9,19 @@ FIELD_TYPES = {"string": str, "integer": int, "boolean": bool, "object": dict, "
 FIELD_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 
 
+def reject_nul(value):
+    # PostgreSQL JSONB cannot store NUL, even though JSON can escape it.
+    if isinstance(value, str) and "\x00" in value:
+        raise ValueError("NUL characters are not supported in stored strings or field names")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            reject_nul(key)
+            reject_nul(item)
+    elif isinstance(value, list):
+        for item in value:
+            reject_nul(item)
+
+
 def validate_fields(fields):
     if not isinstance(fields, list) or not 1 <= len(fields) <= 32:
         raise ValueError("Choose between 1 and 32 data fields")
