@@ -1,8 +1,9 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { blockTitle, dateText, shortHash } from '../ledgerHelpers.js';
 import BlockDetails from './BlockDetails.jsx';
+import { snapshotStatus, statusLabel } from '../snapshotStatus.js';
 
-export default function Chain({ blocks, selectedIndex, onSelect, canDownload }) {
+export default function Chain({ ledgerId, blocks, selectedIndex, onSelect, canDownload, report }) {
   const container = useRef(null);
   const cards = useRef(new Map());
   const [columns, setColumns] = useState(3);
@@ -51,12 +52,13 @@ export default function Chain({ blocks, selectedIndex, onSelect, canDownload }) 
           const position = rowIndex * columns + column;
           if (element) cards.current.set(position, element);
           else cards.current.delete(position);
-        }} className={`block-card ${selectedIndex === block.index ? 'selected' : ''} ${block.index === 0 ? 'genesis' : ''}`} key={`${rowIndex}-${column}`} onClick={() => onSelect(block.index)} aria-expanded={selectedIndex === block.index} aria-controls={selectedIndex === block.index ? `details-${block.index}` : undefined}>
-          <span className="block-topline"><span>{block.index === 0 ? 'GENESIS' : 'MATCH'}</span><span>#{String(block.index).padStart(3, '0')}</span></span>
+        }} className={`block-card ${selectedIndex === block.index ? 'selected' : ''} ${block.index === 0 ? 'genesis' : ''} ${snapshotStatus(report, block.index)?.status || ''}`} key={`${rowIndex}-${column}`} onClick={() => onSelect(block.index)} aria-expanded={selectedIndex === block.index} aria-controls={selectedIndex === block.index ? `details-${block.index}` : undefined}>
+          <span className="block-topline"><span>{block.index === 0 ? 'GENESIS' : 'RECORD'}</span><span>#{String(block.index).padStart(3, '0')}</span></span>
           <strong>{blockTitle(block)}</strong><code>{shortHash(block.hash)}</code>
+          {snapshotStatus(report, block.index) && <span className="card-verdict">{statusLabel(snapshotStatus(report, block.index).status)}</span>}
           <span className="block-bottomline"><span>{block.index === 0 ? 'The starting block' : dateText(block.timestamp_ms)}</span><span aria-hidden="true">{selectedIndex === block.index ? '−' : '+'}</span></span>
         </button>)}
-        {selected && <BlockDetails key={selected.index} block={selected} canDownload={canDownload}/>}
+        {selected && <BlockDetails key={selected.index} ledgerId={ledgerId} block={selected} canDownload={canDownload} report={report}/>}
       </div>;
     })}
   </section>;

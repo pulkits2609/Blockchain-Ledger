@@ -1,63 +1,74 @@
 import { useEffect, useRef, useState } from 'react';
-import { apiRequest, downloadSnapshot } from '../api.js';
+import { apiRequest, downloadSnapshot, ledgerPath } from '../api.js';
 
 const MaximumSnapshotBytes = 8 * 1024 * 1024;
 
-export default function SnapshotControls({ connected, canDownload, headHash }) {
+export default function SnapshotControls({ ledgerId, connected, canDownload, headHash, revisionKey, report, onReport }) {
   const fileInput = useRef(null);
+  const request = useRef(null);
+  const revision = useRef(0);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
-  const [report, setReport] = useState(null);
 
-  // A past comparison is not a fresh verdict after the server changes or disconnects.
   useEffect(() => {
-    setReport(null);
+    // Clear old colours even if an interior edit left the stored final hash unchanged.
+    revision.current += 1;
+    request.current?.abort();
+    onReport(null);
     setError('');
-  }, [connected, canDownload, headHash]);
+    setBusy('');
+    return () => { revision.current += 1; request.current?.abort(); };
+  }, [ledgerId, connected, canDownload, headHash, revisionKey, onReport]);
 
   async function download() {
-    setBusy('download');
-    setError('');
+    setBusy('download'); setError('');
     try {
-      await downloadSnapshot();
+      await downloadSnapshot(ledgerId);
     } catch (requestError) {
       setError(requestError.message);
-    } finally {
-      setBusy('');
-    }
+    } finally { setBusy(''); }
   }
 
   async function validate(event) {
     const file = event.target.files[0];
-    // Reset so the same file can be checked again after the server changes.
     event.target.value = '';
     if (!file) return;
-    setError('');
-    setReport(null);
-    if (file.size > MaximumSnapshotBytes) {
-      setError('Choose a ledger file smaller than 8 MiB.');
+    setError(''); onReport(null);
+    if (!file.size || file.size > MaximumSnapshotBytes) {
+      setError('Choose a nonempty ledger file smaller than 8 MiB.');
       return;
     }
+    const currentRevision = ++revision.current;
+    request.current?.abort();
+    request.current = new AbortController();
     setBusy('validate');
     try {
-      const result = await apiRequest('/api/validate-snapshot', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream' },
-        body: file,
+      const result = await apiRequest(`${ledgerPath(ledgerId)}/validate-snapshot`, {
+        method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file,
+        signal: request.current.signal,
       });
-      setReport(result);
+      if (revision.current !== currentRevision) return;
+      if (result.compared_head && headHash && result.compared_head !== headHash) {
+        throw new Error('The chain changed while checking. Wait for the live view to update and check the file again.');
+      }
+      onReport(result);
     } catch (requestError) {
-      setError(requestError.message);
+      if (revision.current !== currentRevision || requestError.name === 'AbortError') return;
+      // An unauthenticated encrypted file cannot identify a trustworthy block index.
+      setError(`${requestError.message} No individual block is marked as changed from this file.`);
     } finally {
-      setBusy('');
+      if (revision.current === currentRevision) setBusy('');
     }
   }
 
+  function dismiss() {
+    setError(''); onReport(null);
+  }
   return <div className="snapshot-controls">
     <div className="toolbar-actions"><button onClick={download} disabled={!canDownload || Boolean(busy)}>{busy === 'download' ? 'Downloading…' : 'Download ledger'}</button><button onClick={() => fileInput.current.click()} disabled={!connected || Boolean(busy)}>{busy === 'validate' ? 'Checking…' : 'Validate file'}</button><input ref={fileInput} className="file-input" type="file" accept=".ledger" aria-label="Choose encrypted ledger file" onChange={validate}/></div>
     {(error || report) && <section className={`validation-result ${error || !report?.valid ? 'warning' : ''}`} aria-live="polite">
-      <button className="dismiss" onClick={() => { setError(''); setReport(null); }} aria-label="Dismiss validation result">×</button>
-      {error ? <p role="alert">{error}</p> : <><strong>{report.valid ? 'Saved copy matches' : 'Saved copy did not validate'}</strong><p>{report.message}</p><small>{report.checked_blocks} saved blocks checked · {report.server_blocks} blocks on server{report.valid && report.new_blocks > 0 ? ` · ${report.new_blocks} newer blocks` : ''}</small>{Array.isArray(report.errors) && report.errors.length > 0 && <ul>{report.errors.map((finding, index) => <li key={index}>Block {finding.index ?? '—'}: {finding.message}</li>)}</ul>}</>}
+      <button className="dismiss" onClick={dismiss} aria-label="Dismiss validation result">×</button>
+      {error ? <p role="alert">{error}</p> : <><strong>{report.valid ? 'Saved records match' : 'Differences found'}</strong><p>{report.message}</p><small>{report.checked_blocks} saved blocks checked · {report.server_blocks} blocks on server{report.new_blocks > 0 ? ` · ${report.new_blocks} newer blocks` : ''}</small>{Array.isArray(report.errors) && report.errors.length > 0 && <ul>{report.errors.map((finding, index) => <li key={index}>Block {finding.index ?? '—'}: {finding.message}</li>)}</ul>}</>}
     </section>}
   </div>;
 }
