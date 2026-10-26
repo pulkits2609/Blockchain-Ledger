@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 
-from app import LedgerServer, seed_demo
+from legacy_http import LedgerServer, seed_demo
 from ledger import Ledger, LedgerConflict, calculate_hash, canonical_json, create_new_block
 from snapshots import MAX_SNAPSHOT_BYTES, Snapshots
 

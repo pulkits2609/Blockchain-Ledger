@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.client import HTTPConnection
 from pathlib import Path
 
-from app import LedgerServer
+from legacy_http import LedgerServer
 from ledger import (Ledger, LedgerConflict, calculate_hash, canonical_json,
                     create_genesis_block, create_new_block, parse_json, verify_chain)
 
