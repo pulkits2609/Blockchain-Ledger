@@ -8,11 +8,11 @@ import time
 from pathlib import Path
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 ZERO_HASH = "0" * 64
 MAX_BODY_BYTES = 65536
 MAX_DEPTH = 20
-BLOCK_FIELDS = {"schema_version", "index", "match_id", "timestamp_ms", "data", "previous_hash", "hash"}
+BLOCK_FIELDS = {"schema_version", "index", "record_id", "timestamp_ms", "data", "previous_hash", "hash"}
 
 
 def reject_duplicate_keys(pairs):
@@ -69,20 +69,20 @@ def calculate_hash(block):
 
 
 def create_genesis_block():
-    block = {"schema_version": 1, "index": 0, "match_id": "genesis", "timestamp_ms": 0,
+    block = {"schema_version": SCHEMA_VERSION, "index": 0, "record_id": "genesis", "timestamp_ms": 0,
              "data": {"application": "blockchainLedger", "message": "Genesis Block"}, "previous_hash": ZERO_HASH}
     block["hash"] = calculate_hash(block)
     return block
 
 
 def validate_submission(value):
-    if not isinstance(value, dict) or set(value) != {"match_id", "data"}:
-        raise ValueError("Expected exactly match_id and data")
-    match_id = value["match_id"]
-    if not isinstance(match_id, str) or not match_id.strip() or len(match_id) > 128:
-        raise ValueError("match_id must be a nonempty string of at most 128 characters")
-    if match_id == "genesis":
-        raise ValueError("The match_id genesis is reserved")
+    if not isinstance(value, dict) or set(value) != {"record_id", "data"}:
+        raise ValueError("Expected exactly record_id and data")
+    record_id = value["record_id"]
+    if not isinstance(record_id, str) or not record_id.strip() or len(record_id) > 128:
+        raise ValueError("record_id must be a nonempty string of at most 128 characters")
+    if record_id == "genesis":
+        raise ValueError("The record_id genesis is reserved")
     if not isinstance(value["data"], dict):
         raise ValueError("data must be a JSON object")
     validate_json(value)
@@ -90,8 +90,8 @@ def validate_submission(value):
 
 def create_new_block(previous_block, submission):
     validate_submission(submission)
-    block = {"schema_version": 1, "index": previous_block["index"] + 1,
-             "match_id": submission["match_id"], "timestamp_ms": time.time_ns() // 1000000,
+    block = {"schema_version": SCHEMA_VERSION, "index": previous_block["index"] + 1,
+             "record_id": submission["record_id"], "timestamp_ms": time.time_ns() // 1000000,
              "data": submission["data"], "previous_hash": previous_block["hash"]}
     block["hash"] = calculate_hash(block)
     return block
@@ -103,14 +103,14 @@ def is_hash(value):
 
 def verify_block(block):
     if not isinstance(block, dict) or set(block) != BLOCK_FIELDS:
-        raise ValueError("Block fields do not match schema version 1")
+        raise ValueError("Block fields do not match schema version 2")
     for field in ("schema_version", "index", "timestamp_ms"):
         if type(block[field]) is not int or block[field] < 0:
             raise ValueError(field + " must be a nonnegative integer")
     if block["schema_version"] != SCHEMA_VERSION:
         raise ValueError("Unsupported schema version")
-    if not isinstance(block["match_id"], str) or not block["match_id"].strip() or len(block["match_id"]) > 128:
-        raise ValueError("Invalid match_id")
+    if not isinstance(block["record_id"], str) or not block["record_id"].strip() or len(block["record_id"]) > 128:
+        raise ValueError("Invalid record_id")
     if not isinstance(block["data"], dict):
         raise ValueError("Block data must be an object")
     if not is_hash(block["previous_hash"]) or not is_hash(block["hash"]):
@@ -132,9 +132,9 @@ def verify_chain(blocks, initial_errors=None, genesis=None):
                 raise ValueError("Block index does not match its position")
             if index == 0 and block != (genesis if genesis is not None else create_genesis_block()):
                 raise ValueError("Genesis does not match the prescribed genesis block")
-            if block["match_id"] in seen_ids:
-                raise ValueError("Duplicate match_id")
-            seen_ids.add(block["match_id"])
+            if block["record_id"] in seen_ids:
+                raise ValueError("Duplicate record_id")
+            seen_ids.add(block["record_id"])
             if index > 0:
                 previous = blocks[index - 1]
                 if not isinstance(previous, dict) or block["previous_hash"] != previous.get("hash"):
@@ -215,7 +215,7 @@ class Ledger:
             return {"blocks": blocks, "verification": verification,
                     "storage": {"file": str(self.path)}, "updated_at_ms": time.time_ns() // 1000000}
 
-    def append_result(self, submission):
+    def append_record(self, submission):
         validate_submission(submission)
         if len(canonical_json(submission)) > MAX_BODY_BYTES:
             raise ValueError("Submission is too large")
@@ -224,9 +224,9 @@ class Ledger:
             if not verification["valid"]:
                 raise LedgerConflict("Ledger verification failed; no data was changed")
             for block in blocks:
-                if block["match_id"] == submission["match_id"]:
+                if block["record_id"] == submission["record_id"]:
                     if canonical_json(block["data"]) != canonical_json(submission["data"]):
-                        raise LedgerConflict("This match_id already has different data")
+                        raise LedgerConflict("This record_id already has different data")
                     return block, True
             block = create_new_block(blocks[-1], submission)
             with self.path.open("ab") as file:

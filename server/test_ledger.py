@@ -30,25 +30,36 @@ class LedgerTests(unittest.TestCase):
         self.assertEqual(canonical_json({"b": 1, "a": "é"}), b'{"a":"\xc3\xa9","b":1}')
         self.assertTrue(verify_chain([first])["valid"])
 
+    def test_generic_record_format_and_old_schema_rejection(self):
+        genesis = create_genesis_block()
+        self.assertEqual(genesis["schema_version"], 2)
+        self.assertEqual(set(genesis), {"schema_version", "index", "record_id", "timestamp_ms", "data", "previous_hash", "hash"})
+        old = copy.deepcopy(genesis)
+        old["schema_version"] = 1
+        old["hash"] = calculate_hash(old)
+        report = verify_chain([old])
+        self.assertFalse(report["valid"])
+        self.assertTrue(report["errors"])
+
     def test_restart_and_idempotency(self):
-        submission = {"match_id": "match-1", "data": {"scores": [5, 2], "name": "Pulkit"}}
-        original, duplicate = self.ledger.append_result(submission)
+        submission = {"record_id": "record-1", "data": {"values": [5, 2], "name": "Pulkit"}}
+        original, duplicate = self.ledger.append_record(submission)
         self.assertFalse(duplicate)
         self.ledger.close()
         self.ledger = Ledger(self.folder.name)
-        repeated, duplicate = self.ledger.append_result(submission)
+        repeated, duplicate = self.ledger.append_record(submission)
         self.assertTrue(duplicate)
         self.assertEqual(original, repeated)
         self.assertEqual(len(self.ledger.view()["blocks"]), 2)
         with self.assertRaises(LedgerConflict):
-            self.ledger.append_result({"match_id": "match-1", "data": {"scores": [9, 2]}})
+            self.ledger.append_record({"record_id": "record-1", "data": {"values": [9, 2]}})
 
     def test_tampering_and_rebuilt_chain_limitation(self):
-        self.ledger.append_result({"match_id": "match-1", "data": {"score": 2}})
-        self.ledger.append_result({"match_id": "match-2", "data": {"score": 3}})
+        self.ledger.append_record({"record_id": "record-1", "data": {"value": 2}})
+        self.ledger.append_record({"record_id": "record-2", "data": {"value": 3}})
         blocks = self.ledger.view()["blocks"]
         checkpoint = blocks[-1]["hash"]
-        blocks[1]["data"]["score"] = 999
+        blocks[1]["data"]["value"] = 999
         self.assertFalse(verify_chain(blocks)["valid"])
         blocks[1]["hash"] = calculate_hash(blocks[1])
         self.assertFalse(verify_chain(blocks)["valid"])
@@ -59,8 +70,8 @@ class LedgerTests(unittest.TestCase):
 
     def test_invalid_schema_genesis_and_duplicate_id(self):
         genesis = create_genesis_block()
-        new = create_new_block(genesis, {"match_id": "one", "data": {}})
-        for field, value in (("index", True), ("schema_version", 2), ("timestamp_ms", -1)):
+        new = create_new_block(genesis, {"record_id": "one", "data": {}})
+        for field, value in (("index", True), ("schema_version", 999), ("timestamp_ms", -1)):
             changed = copy.deepcopy(new)
             changed[field] = value
             changed["hash"] = calculate_hash(changed)
@@ -69,7 +80,7 @@ class LedgerTests(unittest.TestCase):
         changed["data"]["message"] = "Other genesis"
         changed["hash"] = calculate_hash(changed)
         self.assertFalse(verify_chain([changed])["valid"])
-        repeated = create_new_block(new, {"match_id": "one", "data": {}})
+        repeated = create_new_block(new, {"record_id": "one", "data": {}})
         self.assertFalse(verify_chain([genesis, new, repeated])["valid"])
 
     def test_incomplete_file_blocks_append_without_repair(self):
@@ -78,7 +89,7 @@ class LedgerTests(unittest.TestCase):
         before = self.ledger.path.read_bytes()
         self.assertFalse(self.ledger.view()["verification"]["valid"])
         with self.assertRaises(LedgerConflict):
-            self.ledger.append_result({"match_id": "one", "data": {}})
+            self.ledger.append_record({"record_id": "one", "data": {}})
         self.assertEqual(before, self.ledger.path.read_bytes())
 
     def test_process_lock(self):
@@ -96,16 +107,16 @@ class LedgerTests(unittest.TestCase):
         self.assertFalse(missing.exists())
 
     def test_boolean_is_not_integer_for_retries(self):
-        self.ledger.append_result({"match_id": "boolean", "data": {"score": True}})
+        self.ledger.append_record({"record_id": "boolean", "data": {"value": True}})
         with self.assertRaises(LedgerConflict):
-            self.ledger.append_result({"match_id": "boolean", "data": {"score": 1}})
+            self.ledger.append_record({"record_id": "boolean", "data": {"value": 1}})
         changed = self.ledger.view()["blocks"]
-        changed[1]["data"]["score"] = 1
+        changed[1]["data"]["value"] = 1
         self.assertFalse(verify_chain(changed)["valid"])
 
     def test_concurrent_appends(self):
         def append(index):
-            return self.ledger.append_result({"match_id": "match-" + str(index), "data": {"score": index}})
+            return self.ledger.append_record({"record_id": "record-" + str(index), "data": {"value": index}})
         with ThreadPoolExecutor(max_workers=8) as pool:
             list(pool.map(append, range(20)))
         view = self.ledger.view()
@@ -152,21 +163,21 @@ class ApiTests(unittest.TestCase):
         return status, data
 
     def test_api_create_retry_conflict_and_verify(self):
-        value = {"match_id": "api-one", "data": {"winner": 1}}
+        value = {"record_id": "api-one", "data": {"status": 1}}
         status, result = self.request("POST", "/api/blocks", value)
         self.assertEqual(status, 201)
         self.assertFalse(result["duplicate"])
         self.assertEqual(self.request("POST", "/api/blocks", value)[0], 200)
-        self.assertEqual(self.request("POST", "/api/blocks", {"match_id": "api-one", "data": {}})[0], 409)
+        self.assertEqual(self.request("POST", "/api/blocks", {"record_id": "api-one", "data": {}})[0], 409)
         self.assertTrue(self.request("POST", "/api/verify", {})[1]["valid"])
         view = self.request("GET", "/api/ledger")[1]
-        view["blocks"][1]["data"]["winner"] = 2
+        view["blocks"][1]["data"]["status"] = 2
         self.assertFalse(self.request("POST", "/api/verify", {"blocks": view["blocks"]})[1]["valid"])
         self.assertTrue(self.request("GET", "/api/ledger")[1]["verification"]["valid"])
         self.assertEqual(self.request("GET", "/api/checkpoint")[1]["index"], 1)
 
     def test_bad_requests_and_browser_origin(self):
-        for raw in (b'{"match_id":"x","match_id":"y","data":{}}', b'{"match_id":"x","data":{"x":1.5}}'):
+        for raw in (b'{"record_id":"x","record_id":"y","data":{}}', b'{"record_id":"x","data":{"x":1.5}}'):
             self.assertEqual(self.request("POST", "/api/blocks", raw=raw)[0], 400)
         self.assertEqual(self.request("POST", "/api/blocks", raw=b"x" * 65537)[0], 413)
         self.assertEqual(self.request("POST", "/api/verify", {}, {"Origin": "https://evil.example"})[0], 403)
@@ -180,7 +191,7 @@ class ApiTests(unittest.TestCase):
             file.write(b"bad\n")
         self.assertFalse(self.request("GET", "/api/ledger")[1]["verification"]["valid"])
         self.assertEqual(self.request("GET", "/api/checkpoint")[0], 409)
-        self.assertEqual(self.request("POST", "/api/blocks", {"match_id": "x", "data": {}})[0], 409)
+        self.assertEqual(self.request("POST", "/api/blocks", {"record_id": "x", "data": {}})[0], 409)
 
 
 if __name__ == "__main__":

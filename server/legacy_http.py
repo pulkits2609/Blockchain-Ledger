@@ -59,7 +59,7 @@ class Handler(BaseHTTPRequestHandler):
                 return False
             origin = self.headers.get("Origin")
             if origin is None:
-                return True  # Native GFX and command-line requests have no browser Origin.
+                return True  # Native API and command-line requests have no browser Origin.
             parsed = urlsplit(origin)
             if parsed.scheme != "http" or parsed.username or parsed.password:
                 return False
@@ -110,7 +110,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             value = self.read_body()
             if path == "/api/blocks":
-                block, duplicate = self.server.ledger.append_result(value)
+                block, duplicate = self.server.ledger.append_record(value)
                 self.send_json(200 if duplicate else 201, {"block": block, "duplicate": duplicate})
             elif path == "/api/verify":
                 if value == {}:
@@ -173,7 +173,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(409, {"error": "Cannot export checkpoint from an invalid ledger"})
             else:
                 head = view["blocks"][-1]
-                self.send_json(200, {"schema_version": 1, "index": head["index"], "hash": head["hash"]})
+                self.send_json(200, {"schema_version": head["schema_version"], "index": head["index"], "hash": head["hash"]})
         elif path.startswith("/api/"):
             self.send_json(404, {"error": "API route not found"})
         else:
@@ -203,11 +203,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def seed_demo(ledger):
-    """Opt-in examples use stable IDs, so restarting never duplicates the matches."""
+    """Opt-in examples use stable IDs, so restarting never duplicates records."""
     for number in range(1, 5):
-        ledger.append_result({"match_id": "DEMO-MATCH-" + str(number).zfill(3),
-                              "data": {"demo": True, "label": "Demo match " + str(number),
-                                       "duration_seconds": 180, "winning_team": 1,
-                                       "team_scores": [number + 3, number + 2],
-                                       "players": [{"name": "Player 1", "team": 1, "kills": number + 3, "deaths": number + 2},
-                                                   {"name": "Player 2", "team": 2, "kills": number + 2, "deaths": number + 3}]}})
+        ledger.append_record({"record_id": "DEMO-RECORD-" + str(number).zfill(3),
+                              "data": {"demo": True, "label": "Demo record " + str(number),
+                                       "value": number * 3}})

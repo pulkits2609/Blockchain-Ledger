@@ -45,23 +45,13 @@ def token_hash(token):
 
 
 def prepare_submission(value, fields, record_id=None):
-    """Clients send their schema fields directly; the old game envelope still works."""
+    """Clients send schema fields directly; metadata is generated separately."""
     if record_id is not None:
         if not isinstance(record_id, str) or not 1 <= len(record_id) <= 128 or not record_id.isascii() or any(ord(c) < 33 or ord(c) > 126 for c in record_id):
             raise ValueError("Idempotency-Key must contain 1–128 printable characters without spaces")
     reject_nul(value)
-    names = {field["name"] for field in fields}
-    legacy_envelope = isinstance(value, dict) and set(value) == {"match_id", "data"}
-    # A custom field called data/match_id belongs to the user, not our transport.
-    legacy_envelope = legacy_envelope and not names.intersection({"match_id", "data"})
-    if legacy_envelope:
-        validate_submission(value)
-        validate_data(value["data"], fields)
-        if record_id is not None and record_id != value["match_id"]:
-            raise ValueError("Idempotency-Key must match match_id when using the legacy envelope")
-        return value
     validate_data(value, fields)
-    submission = {"match_id": record_id if record_id is not None else "record-" + uuid.uuid4().hex,
+    submission = {"record_id": record_id if record_id is not None else "record-" + uuid.uuid4().hex,
                   "data": value}
     validate_submission(submission)
     return submission
@@ -148,14 +138,14 @@ class Store:
                 (ledger_id, owner_id, name, description, Jsonb(fields), time.time_ns() // 1000000, token_hash(write_token)))
             connection.execute(sql.SQL("""CREATE TABLE {} (
                 position BIGINT PRIMARY KEY CHECK (position >= 0),
-                match_id TEXT UNIQUE NOT NULL,
+                record_id TEXT UNIQUE NOT NULL,
                 record JSONB NOT NULL
             )""").format(sql.Identifier(blocks)))
             connection.execute(sql.SQL("""CREATE TABLE {} (
                 singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
                 snapshot_key TEXT NOT NULL
             )""").format(sql.Identifier(secret_table)))
-            connection.execute(sql.SQL("INSERT INTO {} (position, match_id, record) VALUES (0, 'genesis', %s)")
+            connection.execute(sql.SQL("INSERT INTO {} (position, record_id, record) VALUES (0, 'genesis', %s)")
                                .format(sql.Identifier(blocks)), (Jsonb(genesis),))
             connection.execute(sql.SQL("INSERT INTO {} (snapshot_key) VALUES (%s)").format(sql.Identifier(secret_table)),
                                (Fernet.generate_key().decode("ascii"),))
@@ -255,12 +245,12 @@ class Store:
             if not verify_ledger(blocks, row)["valid"]:
                 raise LedgerConflict("Ledger verification failed; no data was changed")
             for block in blocks:
-                if block["match_id"] == submission["match_id"]:
+                if block["record_id"] == submission["record_id"]:
                     if canonical_json(block["data"]) != canonical_json(submission["data"]):
-                        raise LedgerConflict("This match_id already has different data")
+                        raise LedgerConflict("This record_id already has different data")
                     return block, True
             block = create_new_block(blocks[-1], submission)
             block_table, _ = table_names(ledger_id)
-            connection.execute(sql.SQL("INSERT INTO {} (position, match_id, record) VALUES (%s, %s, %s)")
-                               .format(sql.Identifier(block_table)), (block["index"], block["match_id"], Jsonb(block)))
+            connection.execute(sql.SQL("INSERT INTO {} (position, record_id, record) VALUES (%s, %s, %s)")
+                               .format(sql.Identifier(block_table)), (block["index"], block["record_id"], Jsonb(block)))
             return block, False

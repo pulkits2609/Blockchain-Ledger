@@ -19,7 +19,7 @@ class SnapshotTests(unittest.TestCase):
         self.folder = tempfile.TemporaryDirectory()
         self.ledger = Ledger(self.folder.name)
         self.snapshots = Snapshots(self.ledger)
-        self.ledger.append_result({"match_id": "one", "data": {"score": 5}})
+        self.ledger.append_record({"record_id": "one", "data": {"value": 5}})
 
     def tearDown(self):
         self.ledger.close()
@@ -31,9 +31,9 @@ class SnapshotTests(unittest.TestCase):
     def test_chain_export_is_encrypted_and_old_prefix_still_matches(self):
         token, index = self.snapshots.export()
         self.assertEqual(index, 1)
-        self.assertNotIn(b'"match_id"', token)
+        self.assertNotIn(b'"record_id"', token)
         self.assertTrue(self.snapshots.validate(token)["valid"])
-        self.ledger.append_result({"match_id": "two", "data": {}})
+        self.ledger.append_record({"record_id": "two", "data": {}})
         report = self.snapshots.validate(token)
         self.assertEqual((report["valid"], report["checked_blocks"], report["new_blocks"]), (True, 2, 1))
 
@@ -79,7 +79,7 @@ class SnapshotTests(unittest.TestCase):
     def test_rebuilt_history_and_deleted_suffix_fail(self):
         token, _ = self.snapshots.export()
         blocks = self.ledger.view()["blocks"]
-        blocks[1]["data"]["score"] = 99
+        blocks[1]["data"]["value"] = 99
         blocks[1]["hash"] = calculate_hash(blocks[1])
         self.rewrite(blocks)
         report = self.snapshots.validate(token)
@@ -93,11 +93,11 @@ class SnapshotTests(unittest.TestCase):
     def test_single_block_compared_and_current_chain_must_be_valid(self):
         token, _ = self.snapshots.export(1)
         blocks = self.ledger.view()["blocks"]
-        blocks[1]["data"]["score"] = 99
+        blocks[1]["data"]["value"] = 99
         blocks[1]["hash"] = calculate_hash(blocks[1])
         self.rewrite(blocks)
         self.assertFalse(self.snapshots.validate(token)["valid"])
-        blocks.append(create_new_block(blocks[-1], {"match_id": "two", "data": {}}))
+        blocks.append(create_new_block(blocks[-1], {"record_id": "two", "data": {}}))
         blocks[-1]["data"]["tampered"] = True
         self.rewrite(blocks)
         before = self.ledger.path.read_bytes()
@@ -123,7 +123,7 @@ class SnapshotTests(unittest.TestCase):
         data = {"value": 1}
         for _ in range(18):
             data = {"nested": data}
-        self.ledger.append_result({"match_id": "nested", "data": data})
+        self.ledger.append_record({"record_id": "nested", "data": data})
         token, _ = self.snapshots.export()
         self.assertTrue(self.snapshots.validate(token)["valid"])
 
@@ -198,7 +198,7 @@ class SnapshotApiTests(unittest.TestCase):
         host = "ledger.example:" + str(self.server.server_port)
         self.assertEqual(self.request("GET", "/api/ledger", headers={"Host": host})[0], 200)
         self.assertEqual(self.request("GET", "/api/ledger", headers={"Host": host, "Origin": "http://" + host})[0], 200)
-        submission = json.dumps({"match_id": "remote", "data": {}}).encode()
+        submission = json.dumps({"record_id": "remote", "data": {}}).encode()
         self.assertEqual(self.request("POST", "/api/blocks", submission,
                                      {"Host": host, "Content-Type": "application/json"})[0], 201)
         for invalid in ({"Host": "evil.example:" + str(self.server.server_port)},

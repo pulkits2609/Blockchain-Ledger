@@ -16,27 +16,28 @@ from multi_snapshots import SnapshotService
 from store import Store, StoreForbidden, StoreNotFound, ledger_genesis, table_names, verify_ledger, prepare_submission
 
 
-FIELDS = [{"name": "score", "type": "integer", "required": True},
+FIELDS = [{"name": "value", "type": "integer", "required": True},
           {"name": "label", "type": "string", "required": False}]
 
 
 class FieldTests(unittest.TestCase):
-    def test_direct_fields_optional_omission_and_legacy_format(self):
+    def test_direct_fields_optional_omission_and_metadata(self):
         fields = [{"name": "body", "type": "string", "required": True},
                   {"name": "note", "type": "string", "required": False}]
         first = prepare_submission({"body": "hello"}, fields)
         self.assertEqual(first["data"], {"body": "hello"})
-        self.assertNotEqual(first["match_id"], prepare_submission({"body": "hello"}, fields)["match_id"])
-        self.assertEqual(prepare_submission({"body": "hello"}, fields, "retry-1")["match_id"], "retry-1")
+        self.assertNotEqual(first["record_id"], prepare_submission({"body": "hello"}, fields)["record_id"])
+        self.assertEqual(prepare_submission({"body": "hello"}, fields, "retry-1")["record_id"], "retry-1")
         for invalid in ({}, {"body": 4}, {"body": "hello", "note": 4}, {"body": "hello", "extra": 1}):
             with self.assertRaises(ValueError):
                 prepare_submission(invalid, fields)
-        legacy = {"match_id": "old-client", "data": {"body": "hello"}}
-        self.assertEqual(prepare_submission(legacy, fields), legacy)
+        legacy = {"record_id": "wrapper-is-not-data", "data": {"body": "hello"}}
+        with self.assertRaises(ValueError):
+            prepare_submission(legacy, fields)
         for identifier in ("with spaces", "\u00e9", "", "x" * 129):
             with self.assertRaises(ValueError):
-                prepare_submission({"match_id": identifier, "data": {"body": "hello"}}, fields, identifier)
-        for invalid in ({"body": "hello\x00world"}, {"match_id": "bad\x00id", "data": {"body": "hello"}}):
+                prepare_submission({"record_id": identifier, "data": {"body": "hello"}}, fields, identifier)
+        for invalid in ({"body": "hello\x00world"}, {"record_id": "bad\x00id", "data": {"body": "hello"}}):
             with self.assertRaises(ValueError):
                 prepare_submission(invalid, fields)
         nested_fields = [{"name": "payload", "type": "object", "required": True}]
@@ -47,16 +48,16 @@ class FieldTests(unittest.TestCase):
             prepare_submission(legacy, fields, "different-id")
         optional = [{"name": "body", "type": "string", "required": False}]
         self.assertEqual(prepare_submission({}, optional)["data"], {})
-        reserved = [{"name": "match_id", "type": "string", "required": True},
+        reserved = [{"name": "record_id", "type": "string", "required": True},
                     {"name": "data", "type": "object", "required": True}]
-        self.assertEqual(prepare_submission({"match_id": "user-field", "data": {}}, reserved)["data"],
-                         {"match_id": "user-field", "data": {}})
+        self.assertEqual(prepare_submission({"record_id": "user-field", "data": {}}, reserved)["data"],
+                         {"record_id": "user-field", "data": {}})
 
     def test_fixed_fields_and_strict_types(self):
         fields = validate_fields(FIELDS)
-        validate_data({"score": 7}, fields)
-        validate_data({"score": 7, "label": "Round"}, fields)
-        for value in ({}, {"score": True}, {"score": 1.5}, {"score": 7, "extra": 1}, {"score": 7, "label": None}):
+        validate_data({"value": 7}, fields)
+        validate_data({"value": 7, "label": "Entry"}, fields)
+        for value in ({}, {"value": True}, {"value": 1.5}, {"value": 7, "extra": 1}, {"value": 7, "label": None}):
             with self.assertRaises(ValueError):
                 validate_data(value, fields)
         for fields in ([], [FIELDS[0], FIELDS[0]], [{"name": "bad field", "type": "integer"}],
@@ -87,7 +88,7 @@ class SnapshotComparisonTests(unittest.TestCase):
         ledger_id = str(uuid.uuid4())
         metadata = {"id": ledger_id, "fields": copy.deepcopy(FIELDS)}
         genesis = ledger_genesis(ledger_id, FIELDS)
-        blocks = [genesis, create_new_block(genesis, {"match_id": "one", "data": {"score": 4}})]
+        blocks = [genesis, create_new_block(genesis, {"record_id": "one", "data": {"value": 4}})]
 
         class MemoryView:
             """Only the read/key boundary is replaced; production encryption stays real."""
@@ -107,16 +108,16 @@ class SnapshotComparisonTests(unittest.TestCase):
 
     def test_valid_prefix_and_changed_data_have_distinct_statuses(self):
         token, _ = self.service.export()
-        self.store.blocks.append(create_new_block(self.store.blocks[-1], {"match_id": "two", "data": {"score": 8}}))
+        self.store.blocks.append(create_new_block(self.store.blocks[-1], {"record_id": "two", "data": {"value": 8}}))
         report = self.service.validate(token)
         self.assertTrue(report["valid"])
         self.assertEqual([value["status"] for value in report["block_statuses"]], ["verified", "verified", "not_in_snapshot"])
-        self.store.blocks[1]["data"]["score"] = 99
+        self.store.blocks[1]["data"]["value"] = 99
         report = self.service.validate(token)
         self.assertFalse(report["valid"])
         self.assertEqual(report["block_statuses"][1]["status"], "changed")
         # Malformed current data should still produce a useful comparison, not crash.
-        self.store.blocks[1]["data"]["score"] = 1.5
+        self.store.blocks[1]["data"]["value"] = 1.5
         self.assertFalse(self.service.validate(token)["valid"])
 
     def test_encrypted_file_and_ledger_identity_are_authenticated(self):
@@ -130,7 +131,7 @@ class SnapshotComparisonTests(unittest.TestCase):
             other_ledger.validate(token)
 
     def test_missing_middle_block_does_not_rename_a_later_block(self):
-        self.store.blocks.append(create_new_block(self.store.blocks[-1], {"match_id": "two", "data": {"score": 8}}))
+        self.store.blocks.append(create_new_block(self.store.blocks[-1], {"record_id": "two", "data": {"value": 8}}))
         token, _ = self.service.export()
         del self.store.blocks[1]
         report = self.service.validate(token)
@@ -188,9 +189,9 @@ class PostgreSQLStoreTests(unittest.TestCase):
         self.created.append(result["ledger"]["id"])
         return result
 
-    def append(self, created, record_id="record-1", score=7):
+    def append(self, created, record_id="record-1", value=7):
         return self.store.append(created["ledger"]["id"], created["write_token"],
-                                 {"match_id": record_id, "data": {"score": score}})
+                                 {"value": value}, record_id=record_id)
 
     def test_isolated_tables_tokens_and_restart(self):
         first, second = self.create(), self.create()
@@ -206,9 +207,9 @@ class PostgreSQLStoreTests(unittest.TestCase):
         self.assertTrue(duplicate)
         self.assertEqual(repeated, block)
         with self.assertRaises(LedgerConflict):
-            self.append(first, score=8)
+            self.append(first, value=8)
         with self.assertRaises(StoreForbidden):
-            self.store.append(second_id, first["write_token"], {"match_id": "other", "data": {"score": 7}})
+            self.store.append(second_id, first["write_token"], {"value": 7}, record_id="other")
         for ledger in self.store.list_ledgers(owner_id=self.owner):
             self.assertNotIn("token_hash", ledger)
             self.assertNotIn("write_token", ledger)
@@ -243,7 +244,7 @@ class PostgreSQLStoreTests(unittest.TestCase):
         created = self.create()
         ledger_id = created["ledger"]["id"]
         with self.assertRaises(ValueError):
-            self.store.append(ledger_id, created["write_token"], {"match_id": "bad", "data": {"score": True}})
+            self.store.append(ledger_id, created["write_token"], {"value": True}, record_id="bad")
         with ThreadPoolExecutor(max_workers=4) as workers:
             list(workers.map(lambda value: self.append(created, "record-" + str(value), value), range(8)))
         view = self.store.read(ledger_id)
@@ -261,7 +262,7 @@ class PostgreSQLStoreTests(unittest.TestCase):
         self.assertTrue(report["valid"])
         self.assertEqual([entry["status"] for entry in report["block_statuses"]], ["verified", "verified", "not_in_snapshot"])
         self.assertEqual(report["new_blocks"], 1)
-        self.assertEqual(report["snapshot_blocks"][1]["data"], {"score": 7})
+        self.assertEqual(report["snapshot_blocks"][1]["data"], {"value": 7})
         block_token, _ = service.export(1)
         report = service.validate(block_token)
         self.assertEqual([entry["status"] for entry in report["block_statuses"]], ["not_in_snapshot", "verified", "not_in_snapshot"])
@@ -280,7 +281,7 @@ class PostgreSQLStoreTests(unittest.TestCase):
         self.append(created, "record-2", 8)
         token, _ = service.export()
         blocks = self.store.read(ledger_id)["blocks"]
-        blocks[1]["data"]["score"] = 999
+        blocks[1]["data"]["value"] = 999
         table = sql.Identifier(table_names(ledger_id)[0])
         with self.store.connect() as connection:
             connection.execute(sql.SQL("UPDATE {} SET record = %s WHERE position = 1").format(table), (Jsonb(blocks[1]),))
@@ -302,7 +303,7 @@ class PostgreSQLStoreTests(unittest.TestCase):
         self.append(created)
         token, _ = service.export()
         blocks = self.store.read(ledger_id)["blocks"]
-        blocks[1]["data"]["score"] = 10
+        blocks[1]["data"]["value"] = 10
         blocks[1]["hash"] = calculate_hash(blocks[1])
         with self.store.connect() as connection:
             connection.execute(sql.SQL("UPDATE {} SET record = %s WHERE position = 1")

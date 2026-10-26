@@ -294,7 +294,7 @@ class WebHandler(BaseHTTPRequestHandler):
                 if not view["verification"]["valid"]:
                     raise LedgerConflict("Cannot export a checkpoint from an invalid ledger")
                 head = view["blocks"][-1]
-                return self.send_json(200, {"schema_version": 1, "index": head["index"], "hash": head["hash"]})
+                return self.send_json(200, {"schema_version": head["schema_version"], "index": head["index"], "hash": head["hash"]})
             if method == "GET" and operation == "snapshot":
                 query = parse_qs(parsed.query, keep_blank_values=True)
                 index = None
@@ -418,10 +418,10 @@ def main():
             if not existing:
                 result = store.create_ledger(owner["id"], "Demo ledger", "Four explicit demo records",
                                              [{"name": "label", "type": "string", "required": True},
-                                              {"name": "score", "type": "integer", "required": True}])
+                                              {"name": "value", "type": "integer", "required": True}])
                 for index in range(1, 5):
                     store.append(result["ledger"]["id"], result["write_token"],
-                                 {"match_id": "DEMO-" + str(index), "data": {"label": "Demo record " + str(index), "score": index * 3}})
+                                 {"label": "Demo record " + str(index), "value": index * 3}, record_id="DEMO-" + str(index))
                 print("Demo ledger created. Its owner can rotate the write token from the dashboard.")
         bind = args.bind or os.environ.get("LEDGER_BIND", "127.0.0.1")
         port = args.port if args.port is not None else int(os.environ.get("LEDGER_PORT", "8000"))

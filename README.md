@@ -48,9 +48,9 @@ has a name, type and required flag. Supported types are `string`, `integer`,
 
 ```json
 [
-  { "name": "winner", "type": "string", "required": true },
-  { "name": "scores", "type": "array", "required": true },
-  { "name": "duration_seconds", "type": "integer", "required": true }
+  { "name": "title", "type": "string", "required": true },
+  { "name": "tags", "type": "array", "required": false },
+  { "name": "quantity", "type": "integer", "required": true }
 ]
 ```
 
@@ -196,7 +196,7 @@ The creator receives a per-ledger path and a bearer token when the ledger is
 created. Use the displayed path, rather than the old shared `/api/blocks` route.
 Send the ledger's fields directly in the JSON body. Required fields must be
 present; optional fields may be omitted. Included fields must have the declared
-type, and unknown fields are rejected. No `match_id` or `data` wrapper is required.
+type, and unknown fields are rejected. No extra wrapper is required.
 
 ```http
 POST /api/ledgers/LEDGER_ID/blocks HTTP/1.1
@@ -205,9 +205,9 @@ Authorization: Bearer YOUR_PRIVATE_WRITE_TOKEN
 Content-Type: application/json
 
 {
-  "winner": "Team 1",
-  "scores": [8, 5],
-  "duration_seconds": 180
+  "title": "Inventory receipt",
+  "tags": ["warehouse", "delivery"],
+  "quantity": 180
 }
 ```
 
@@ -216,14 +216,15 @@ server generates its internal record ID. For retry safety, optionally send an
 `Idempotency-Key` header (1–128 printable ASCII characters without spaces).
 The same key and data return the existing block with HTTP 200; different
 data for that key produce a conflict. Without the header, each accepted request
-creates a new record. The older `{ "match_id": "...", "data": {...} }` format
-remains supported for schemas without custom `match_id`/`data` fields; such custom
-field names are interpreted as ordinary direct data instead of a transport wrapper.
+creates a new record. Stored block metadata uses the generic `record_id` field;
+application fields belong directly in the request body and are stored under `data`.
+Envelope-style requests are not accepted unless those fields are explicitly part
+of the ledger's own schema.
 Invalid schema data, invalid tokens
 and writes to a non-active ledger are rejected without appending.
 
 The server owns indexes, timestamps, previous hashes and record hashes. The token
-authorizes submission but does not establish that a reported score or other fact
+authorizes submission but does not establish that a submitted fact
 is true. Requests are bounded; no endpoint edits saved block contents.
 
 Browser routes include:
@@ -242,10 +243,12 @@ Browser routes include:
 | `POST /api/ledgers/ID/rotate-token` | Creator-only token replacement |
 | `PATCH /api/ledgers/ID`, `DELETE /api/ledgers/ID` | Administrator metadata/state changes or deletion |
 
-GFX integration needs a separate client adapter update for the new ledger ID,
-bearer token and HTTPS URL. The old Windows GFX uploader uses an unauthenticated
-HTTP endpoint and cannot automatically publish to this new API. This ledger
-upgrade does not change GFX gameplay or its source code.
+External applications integrate through their ledger-specific HTTPS endpoint and
+bearer token. No other application's source code or runtime is required.
+
+New ledgers use block schema version 2 with `record_id` metadata. This is a clean
+format change: create fresh ledgers after updating. Existing historical hashes and
+snapshots are not silently rewritten or migrated.
 
 ## Snapshots and visible verification
 

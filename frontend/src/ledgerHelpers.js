@@ -11,6 +11,6 @@ export function shortHash(hash = '') {
 
 export function blockTitle(block) {
   if (block.index === 0) return 'Genesis block';
-  if (typeof block.match_id === 'string' && block.match_id) return block.match_id;
+  if (typeof block.record_id === 'string' && block.record_id) return block.record_id;
   return `Block ${block.index}`;
 }

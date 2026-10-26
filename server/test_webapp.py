@@ -28,7 +28,7 @@ from web_app import WebServer
 
 DATABASE_URL = os.environ.get("LEDGER_TEST_DATABASE_URL")
 PASSWORD = "test-only-long-password"
-FIELDS = [{"name": "score", "type": "integer", "required": True}]
+FIELDS = [{"name": "value", "type": "integer", "required": True}]
 
 
 class BasicTests(unittest.TestCase):
@@ -115,7 +115,7 @@ class WebTests(unittest.TestCase):
         return value["user"], headers["Set-Cookie"].split(";")[0], value["csrf_token"]
 
     def create(self, cookie, csrf):
-        status, result, _ = self.request("POST", "/api/ledgers", {"name": "Scores", "description": "A test ledger", "fields": FIELDS}, cookie, csrf)
+        status, result, _ = self.request("POST", "/api/ledgers", {"name": "Records", "description": "A test ledger", "fields": FIELDS}, cookie, csrf)
         self.assertEqual(status, 201, result)
         self.ledgers.append(result["ledger"]["id"])
         return result
@@ -139,16 +139,17 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.request("GET", path + "/credentials", cookie=other_cookie)[0], 403)
         self.assertEqual(self.request("GET", path + "/credentials", cookie=cookie)[0], 200)
         self.assertEqual(self.request("GET", "/api/my-ledgers", cookie=other_cookie)[1]["ledgers"], [])
-        sample = {"match_id": "record-1", "data": {"score": 7}}
+        sample = {"value": 7}
+        retry = {"Idempotency-Key": "record-1"}
         self.assertEqual(self.request("POST", path + "/blocks", sample)[0], 401)
         self.assertEqual(self.request("POST", path + "/blocks", sample, token="x" * 40)[0], 403)
-        self.assertEqual(self.request("POST", path + "/blocks", sample, token=created["write_token"])[0], 201)
-        self.assertEqual(self.request("POST", path + "/blocks", sample, token=created["write_token"])[0], 200)
-        self.assertEqual(self.request("POST", path + "/blocks", {"match_id": "bad", "data": {"score": True}}, token=created["write_token"])[0], 400)
+        self.assertEqual(self.request("POST", path + "/blocks", sample, token=created["write_token"], headers=retry)[0], 201)
+        self.assertEqual(self.request("POST", path + "/blocks", sample, token=created["write_token"], headers=retry)[0], 200)
+        self.assertEqual(self.request("POST", path + "/blocks", {"value": True}, token=created["write_token"])[0], 400)
         status, rotated, _ = self.request("POST", path + "/rotate-token", {}, cookie, csrf)
         self.assertEqual(status, 200)
-        self.assertEqual(self.request("POST", path + "/blocks", sample, token=created["write_token"])[0], 403)
-        self.assertEqual(self.request("POST", path + "/blocks", sample, token=rotated["write_token"])[0], 200)
+        self.assertEqual(self.request("POST", path + "/blocks", sample, token=created["write_token"], headers=retry)[0], 403)
+        self.assertEqual(self.request("POST", path + "/blocks", sample, token=rotated["write_token"], headers=retry)[0], 200)
         self.assertEqual(self.request("PATCH", path, {"state": "read_only"}, cookie, csrf)[0], 403)
         self.assertEqual(self.request("POST", "/api/blocks", sample)[0], 404)
         self.assertEqual(self.request("POST", "/api/logout", {}, cookie, csrf)[0], 200)
@@ -166,7 +167,7 @@ class WebTests(unittest.TestCase):
         status, result, _ = self.request("POST", path, {"body": "hello"}, token=token)
         self.assertEqual(status, 201, result)
         self.assertEqual(result["block"]["data"], {"body": "hello"})
-        self.assertTrue(result["block"]["match_id"].startswith("record-"))
+        self.assertTrue(result["block"]["record_id"].startswith("record-"))
         self.assertEqual(self.request("POST", path, {"body": "hello", "note": "optional"}, token=token)[0], 201)
         for invalid in ({}, {"body": True}, {"body": "hello", "note": None}, {"body": "hello", "other": 1}):
             self.assertEqual(self.request("POST", path, invalid, token=token)[0], 400)
@@ -176,12 +177,12 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.request("POST", path, {"body": "hello"}, token=token, headers=header)[0], 201)
         self.assertEqual(self.request("POST", path, {"body": "hello"}, token=token, headers=header)[0], 200)
         self.assertEqual(self.request("POST", path, {"body": "changed"}, token=token, headers=header)[0], 409)
-        legacy = {"match_id": "old-client-1", "data": {"body": "legacy format"}}
-        self.assertEqual(self.request("POST", path, legacy, token=token)[0], 201)
+        legacy = {"record_id": "old-client-1", "data": {"body": "legacy format"}}
+        self.assertEqual(self.request("POST", path, legacy, token=token)[0], 400)
         before = self.store.get_ledger(created["ledger"]["id"])["block_count"]
-        for invalid in ({"body": "bad\x00value"}, {"match_id": "bad\x00id", "data": {"body": "hello"}}):
+        for invalid in ({"body": "bad\x00value"}, {"record_id": "bad\x00id", "data": {"body": "hello"}}):
             self.assertEqual(self.request("POST", path, invalid, token=token)[0], 400)
-        self.assertEqual(self.request("POST", path, {"match_id": "with spaces", "data": {"body": "hello"}},
+        self.assertEqual(self.request("POST", path, {"record_id": "with spaces", "data": {"body": "hello"}},
                                       token=token, headers={"Idempotency-Key": "with spaces"})[0], 400)
         self.assertEqual(self.store.get_ledger(created["ledger"]["id"])["block_count"], before)
 
@@ -204,30 +205,30 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.request("POST", path + "/rotate-token", {}, admin_cookie, logged["csrf_token"])[0], 403)
         for state in ("read_only", "archived"):
             self.assertEqual(self.request("PATCH", path, {"state": state}, admin_cookie, logged["csrf_token"])[0], 200)
-            self.assertEqual(self.request("POST", path + "/blocks", {"match_id": state, "data": {"score": 3}}, token=created["write_token"])[0], 409)
+            self.assertEqual(self.request("POST", path + "/blocks", {"value": 3}, token=created["write_token"])[0], 409)
         for forbidden in ({"fields": []}, {"blocks": []}, {"owner_id": admin["id"]}):
             self.assertEqual(self.request("PATCH", path, forbidden, admin_cookie, logged["csrf_token"])[0], 400)
         self.assertEqual(self.request("DELETE", path, {"confirm": "wrong"}, admin_cookie, logged["csrf_token"])[0], 400)
-        self.assertEqual(self.request("DELETE", path, {"confirm": "Scores"}, admin_cookie, logged["csrf_token"])[0], 200)
+        self.assertEqual(self.request("DELETE", path, {"confirm": "Records"}, admin_cookie, logged["csrf_token"])[0], 200)
         self.assertEqual(self.request("GET", path)[0], 404)
 
     def test_snapshot_visual_status_and_tampering(self):
         _, cookie, csrf = self.register()
         created = self.create(cookie, csrf)
         path = "/api/ledgers/" + created["ledger"]["id"]
-        self.request("POST", path + "/blocks", {"match_id": "one", "data": {"score": 1}}, token=created["write_token"])
+        self.request("POST", path + "/blocks", {"value": 1}, token=created["write_token"])
         status, snapshot, _ = self.request("GET", path + "/snapshot")
         self.assertEqual(status, 200)
-        self.request("POST", path + "/blocks", {"match_id": "two", "data": {"score": 2}}, token=created["write_token"])
+        self.request("POST", path + "/blocks", {"value": 2}, token=created["write_token"])
         headers = {"Content-Type": "application/octet-stream"}
         status, report, _ = self.request("POST", path + "/validate-snapshot", snapshot, headers=headers)
         self.assertEqual(status, 200)
         self.assertEqual([row["status"] for row in report["block_statuses"]], ["verified", "verified", "not_in_snapshot"])
-        self.assertEqual(report["snapshot_blocks"][1]["data"], {"score": 1})
+        self.assertEqual(report["snapshot_blocks"][1]["data"], {"value": 1})
         block_table, _ = table_names(created["ledger"]["id"])
         with self.store.connect() as connection:
             record = self.store.read(created["ledger"]["id"])["blocks"][1]
-            record["data"]["score"] = 999
+            record["data"]["value"] = 999
             connection.execute(sql.SQL("UPDATE {} SET record=%s WHERE position=1").format(sql.Identifier(block_table)), (Jsonb(record),))
         _, report, _ = self.request("POST", path + "/validate-snapshot", snapshot, headers=headers)
         self.assertFalse(report["valid"])

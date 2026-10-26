@@ -38,7 +38,7 @@ function Integration({ ledger, initial, onClose }) {
     {endpoint && <label>Write endpoint<input readOnly value={endpoint}/></label>}
     {details?.write_token ? <><p className="notice warning">Save this token now. It is shown only until you close this panel. It is not saved in browser storage.</p><label>Bearer token<textarea readOnly spellCheck="false" value={details.write_token}/></label></> : details && <p className="muted">The saved token cannot be retrieved. {details.token_hint && `Hint: ${details.token_hint}`} Rotate it if you have lost it.</p>}
     {endpoint && <details><summary>Request format</summary>
-      <p>Send your ledger fields directly as JSON. No match_id or data wrapper is required; the server generates the record ID.</p>
+      <p>Send your ledger fields directly as JSON. The server generates a record ID; no extra wrapper is required.</p>
       <ul>{(ledger.fields || []).map(field => <li key={field.name}><code>{field.name}</code> · {field.type} · {field.required === false ? 'Optional — may be omitted' : 'Required'}</li>)}</ul>
       <p>Optional fields must have the correct type when included. Unknown fields are rejected.</p>
       <label className="check-label"><input type="checkbox" checked={includeOptional} onChange={event => setIncludeOptional(event.target.checked)}/>Include optional fields in example</label>
