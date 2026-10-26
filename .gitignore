@@ -28,3 +28,6 @@ test-output/
 .DS_Store
 Thumbs.db
 Desktop.ini
+backups/
+certs/
+*.dump

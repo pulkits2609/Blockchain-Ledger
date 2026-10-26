@@ -1,228 +1,358 @@
 # blockchainLedger
 
-A standalone college prototype: a React chain viewer and a Python SHA-256
-hash-linked ledger. GFX can optionally POST a finished match result; it does not
-import ledger code or need the ledger to play a match.
+A small React website and Python API for public, SHA-256-linked ledgers. Anyone
+can browse a ledger, open its blocks and download an encrypted snapshot. Sign in
+to create a ledger and receive its private write token. One administrator manages
+ledger metadata, availability and deletion.
 
-This is a centralized, single-writer ledger. Hash verification checks consistency;
-it does not prove who submitted a result or stop an owner rebuilding history.
+Records live in a local PostgreSQL database. This is a centralized application,
+not distributed consensus: hashes reveal inconsistent records and links, but do
+not prove that submitted information is truthful or prevent a database owner from
+rebuilding all history. Keep a trusted chain-head fingerprint outside the server
+when you need to detect a complete rewrite.
 
-## What is included
+## Accounts and permissions
 
-- Python API that appends submitted JSON results to a persistent SHA-256-linked chain.
-- Deterministic genesis, canonical serialization, duplicate-result handling and
-  independent hash/link verification after restart.
-- Minimal React viewer with a live wrapping chain, hover animation and expandable,
-  read-only block details.
-- Encrypted whole-ledger or individual-block downloads and comparison of an older
-  downloaded file against the current server history.
-- Chain-head export, four optional demo matches, Windows launchers and automated
-  storage, HTTP, verification and encrypted-snapshot tests.
-- Optional integration with GFX through HTTP; the ledger also runs independently.
+| Action | Visitor | Ledger creator | Administrator |
+| --- | --- | --- | --- |
+| List and view ledgers, download and validate snapshots | Yes | Yes | Yes |
+| Create a ledger | Sign in first | Yes | Yes |
+| See integration details or rotate a ledger's write token | No | Own ledger only | Only if also its creator |
+| Append a block through the API | Valid bearer token required | Valid bearer token required | Valid bearer token required |
+| Edit name/description, change state or delete a ledger | No | No | Yes |
+| Rewrite saved blocks or change an established schema | No | No | No |
 
-## Repository and local data
+Ordinary accounts use self-registration. Passwords are hashed; browser login uses
+an HTTP-only session cookie. Browser account/ledger changes require a CSRF token.
+Write tokens belong in an API client's secret configuration, not frontend source,
+URLs or Git. The full write token is shown at creation/rotation; store it safely.
+Rotating it invalidates the previous token.
 
-The repository contains the Python server, React source, dependency lockfile,
-launchers and tests. Install dependencies and build the frontend after cloning.
-Generated builds, dependencies, local environment files, test output and downloaded
-snapshots are excluded by `.gitignore`.
+Integration details are hidden from visitors in the UI and owner-only API.
+Endpoint names are not a security boundary: append requests are authorized using
+the bearer token even if someone discovers the route.
 
-Live records and the private snapshot key belong in `server/data/` by default and
-are also excluded from Git. Back up this directory separately; a source-code clone
-does not restore your saved ledger or make old encrypted downloads readable.
+States are **active**, **read_only** and **archived**. Only an active ledger accepts
+new blocks. Read-only and archived ledgers remain publicly inspectable. Deletion
+removes that ledger's stored records and encryption key; it is not an undo action.
 
-## Start the viewer
+## Create a ledger and define its blocks
 
-Requirements: Python 3.11+ and Node.js 22.12+ for building the frontend.
+The home screen offers **View ledgers** or **Log in**. Visitors can choose any
+listed ledger. After login, the account view lists ledgers created by that user;
+the administrator's view lists all ledgers.
 
-On Windows, double-click **Start Ledger.bat**, then open http://127.0.0.1:8000.
-The launcher installs the Python encryption dependency if missing, installs locked
-frontend dependencies and builds the viewer if its build is missing. Python serves
-both the built React app and its API.
+Choose a name, description and field list before creating a ledger. Each field
+has a name, type and required flag. Supported types are `string`, `integer`,
+`boolean`, `object` and `array`. For example:
 
-Or run these commands from this project folder:
+```json
+[
+  { "name": "winner", "type": "string", "required": true },
+  { "name": "scores", "type": "array", "required": true },
+  { "name": "duration_seconds", "type": "integer", "required": true }
+]
+```
+
+Creation generates the genesis block and fixes the schema. Later submissions
+must satisfy it; fields and existing block contents cannot be edited afterward.
+Objects and arrays accept the project's supported JSON values, rather than an
+additional nested field designer. Fractional values must be represented as scaled
+integers. The canonical JSON format intentionally rejects floating-point values,
+unsafe-range integers, duplicate keys and excessive nesting.
+
+## Local setup on Windows
+
+Requirements:
+
+- Python 3.11 or newer, with `python` available in the terminal.
+- Node.js 22.12 or newer and npm for building the React frontend.
+- A local PostgreSQL server and a dedicated application database/user.
+
+Create the PostgreSQL role and database once using pgAdmin or PostgreSQL's tools.
+Use a normal login role that owns the application database, not a PostgreSQL
+superuser. Then, from this project directory:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Edit `.env`: set `LEDGER_DATABASE_URL` to the local database and its password.
+Percent-encode reserved URL characters in the password. The example's
+`CHANGE_ME` is a placeholder. Keep `.env` private; it is ignored by Git.
+Explicit process environment variables take priority over values in `.env`.
+
+For first-time administrator creation only, set `LEDGER_ADMIN_USERNAME` and
+`LEDGER_ADMIN_PASSWORD` in `.env`, then run:
+
+```powershell
+.\Start Ledger.bat --init-admin
+```
+
+This prepares `.venv`, installs pinned Python requirements, builds the viewer if
+its build is missing, checks PostgreSQL and runs the requested command. Remove
+`LEDGER_ADMIN_PASSWORD` from `.env` after initialization. Ordinary startup does not
+overwrite the administrator or reset its password.
+Usernames use 3–32 letters, numbers, underscores or hyphens; passwords contain
+12–128 characters.
+
+Start the website by double-clicking **Start Ledger.bat** or running:
+
+```powershell
+.\Start Ledger.bat
+```
+
+For local development the example configuration serves
+`http://127.0.0.1:8000`. The Python process serves both the built React viewer and
+the API. Stop it with Ctrl+C. After frontend changes, rebuild explicitly:
 
 ```powershell
 npm.cmd --prefix frontend ci
 npm.cmd --prefix frontend run build
-python -m pip install -r server/requirements.txt
-python server/app.py
 ```
 
-On Linux, use `npm` and `python3` instead. The pinned `cryptography` dependency
-provides authenticated encryption; the HTTP server and ledger use standard Python.
-After editing frontend source, run the build command again.
+The separate **Start Demo Ledger.bat** launcher requests explicit demo seeding.
+Set `LEDGER_ADMIN_USERNAME` to the initialized administrator's name first. It
+creates the designated demo ledger only if absent; normal startup inserts no
+sample results and does not need administrator credentials in the environment.
 
-For the requested four test matches, use **Start Demo Ledger.bat** or:
+## Local setup on Ubuntu
 
-```powershell
-python server/app.py --seed-demo
+Install PostgreSQL and Python prerequisites if they are not already installed:
+
+```bash
+sudo apt update
+sudo apt install postgresql postgresql-client python3 python3-venv python3-pip
 ```
 
-This appends four labelled `DEMO-MATCH-*` records once, preserving existing data.
-Restarting with this flag does not duplicate them. Normal startup adds no samples.
+Use Python 3.11+ and install Node.js 22.12+ with npm separately if the distribution
+version is older. See the [official Node.js downloads](https://nodejs.org/en/download).
 
-The viewer contains just a wrapping chain and a few controls. Hover or focus a
-block to lift it, and click to expand its read-only data beneath its row. The
-download controls save encrypted `.ledger` files. **Validate file** compares a
-previous download against the current server without importing or changing it.
+Create the application role/database once. `--pwprompt` keeps the password out of
+the shell command; these commands do not replace an existing role/database:
 
-For frontend development, keep `python server/app.py` running, then use a second
-terminal:
-
-```powershell
-cd frontend
-npm.cmd run dev
+```bash
+sudo -u postgres createuser --pwprompt ledger_app
+sudo -u postgres createdb --owner=ledger_app blockchain_ledger
+cp .env.example .env
+chmod 600 .env
 ```
 
-Open http://127.0.0.1:5173. Vite proxies `/api` to Python on port 8000.
-`LEDGER_API_URL` can change that development proxy target if needed.
+Edit `.env` with the same role password and database name, then run setup as your
+ordinary user:
 
-## Submit a result through one API
-
-`POST http://127.0.0.1:8000/api/blocks` is the only append endpoint. Send an object
-containing exactly `match_id` and `data` with `Content-Type: application/json`.
-The server supplies the index, timestamp, previous hash and new hash.
-
-```powershell
-$result = @{
-    match_id = 'MATCH-001'
-    data = @{
-        duration_seconds = 180
-        winning_team = 1
-        team_scores = @(8, 5)
-        players = @(
-            @{ name = 'Pulkit'; team = 1; kills = 8; deaths = 5 }
-            @{ name = 'Player 2'; team = 2; kills = 5; deaths = 8 }
-        )
-    }
-} | ConvertTo-Json -Depth 8
-
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/blocks `
-    -ContentType 'application/json' -Body $result
+```bash
+bash deploy/setup-ubuntu.sh
 ```
 
-The browser refreshes from the server every 1.5 seconds. It does not need to be
-open when submitting. Entries are created through the API, not by editing cards.
+Setup creates a project virtual environment, installs pinned Python dependencies,
+runs `npm ci` and builds the viewer, then checks PostgreSQL. It does not install
+system packages, change PostgreSQL users or replace data.
 
-- A new match returns HTTP 201 and `{ "block": ..., "duplicate": false }`.
-- Retrying the same ID and data returns the existing block with HTTP 200.
-- Reusing the ID with different data returns HTTP 409 without appending.
-- `data` is a JSON object; its contents are application-defined. The ledger does
-  not check whether submitted scores are truthful or came from GFX.
-- Use unique match IDs across restarts. IDs and hashes should be strings.
-- Bodies are limited to 64 KiB. Data supports strings, safe-range integers,
-  booleans, null, objects and arrays. Floating-point values, duplicate JSON keys
-  and excessive nesting are rejected. Encode fractional values as scaled integers.
+Set the first administrator username/password in `.env`, initialize once, and
+remove its password from the environment file afterward:
 
-The additional routes only read or verify:
+```bash
+.venv/bin/python server/app.py --env-file .env --init-admin
+bash deploy/start-ubuntu.sh
+```
+
+After pulling application updates, run `bash deploy/setup-ubuntu.sh` again to
+reinstall locked dependencies and rebuild. The start script runs setup only if
+the virtual environment or frontend build is missing.
+
+## HTTPS with your certificate
+
+No certificate or private key is included in the repository. Supply your actual
+certificate chain and matching private key later. Set these values in `.env`:
+
+```ini
+LEDGER_BIND=0.0.0.0
+LEDGER_PORT=8443
+LEDGER_ALLOWED_HOSTS=ledger.example.com
+LEDGER_PUBLIC_ORIGIN=https://ledger.example.com:8443
+LEDGER_TLS_CERT=/etc/blockchainLedger/fullchain.pem
+LEDGER_TLS_KEY=/etc/blockchainLedger/private.key
+LEDGER_DEV_MODE=false
+LEDGER_SECURE_COOKIES=true
+```
+
+Replace the hostname and paths. The certificate must cover the hostname visitors
+use, and their devices must trust its issuing CA. A private CA requires installing
+its CA certificate on those devices; do not work around trust failures by disabling
+certificate verification. Keep the private key readable only by the service
+account and its administrator.
+
+Start the same script. Python terminates TLS directly; the viewer and API share
+the configured HTTPS origin. `LEDGER_PUBLIC_ORIGIN` must exactly match the browser's
+scheme, hostname and port. `LEDGER_ALLOWED_HOSTS` is a comma-separated host list,
+without schemes or ports. Use one canonical public origin for login.
+
+The built-in server is intended for this small deployment. Do not place an HTTPS
+reverse proxy in front of it without also configuring trusted origin and cookie
+handling; arbitrary forwarded headers must not be trusted.
+
+An optional `deploy/blockchain-ledger.service` example runs an already prepared
+installation at `/opt/blockchainLedger` as an unprivileged `ledger` user. Create
+that account, adjust the paths and give it read access to `.env` and the TLS key
+before installing the unit. Use an unprivileged port such as 8443. The example
+does not create accounts, databases, certificates or firewall/router rules.
+
+```bash
+sudo cp deploy/blockchain-ledger.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now blockchain-ledger
+sudo journalctl -u blockchain-ledger -f
+```
+
+## Append through the creator's API
+
+The creator receives a per-ledger path and a bearer token when the ledger is
+created. Use the displayed path, rather than the old shared `/api/blocks` route.
+The request still contains an idempotent record identifier called `match_id` for
+compatibility with the original data format; it need not describe a game match.
+
+```http
+POST /api/ledgers/LEDGER_ID/blocks HTTP/1.1
+Host: ledger.example.com:8443
+Authorization: Bearer YOUR_PRIVATE_WRITE_TOKEN
+Content-Type: application/json
+
+{
+  "match_id": "RECORD-001",
+  "data": { "winner": "Team 1", "scores": [8, 5], "duration_seconds": 180 }
+}
+```
+
+Send it over the configured HTTPS origin. A new record returns HTTP 201. Retrying
+the same identifier and data returns the existing block with HTTP 200; different
+data for that identifier produces a conflict. Invalid schema data, invalid tokens
+and writes to a non-active ledger are rejected without appending.
+
+The server owns indexes, timestamps, previous hashes and record hashes. The token
+authorizes submission but does not establish that a reported score or other fact
+is true. Requests are bounded; no endpoint edits saved block contents.
+
+Browser routes include:
 
 | Route | Purpose |
 | --- | --- |
-| `GET /api/ledger` | Blocks, disk verification, storage location and read time |
-| `POST /api/verify` with `{}` | Verify the saved ledger |
-| `POST /api/verify` with `{ "blocks": [...] }` | Verify a supplied copy without saving it |
-| `GET /api/checkpoint` | Export the current valid head's index and hash |
-| `GET /api/snapshot` | Download the current ledger as an encrypted file |
-| `GET /api/snapshot?block=2` | Download only block 2 as an encrypted file |
-| `POST /api/validate-snapshot` | Send raw `.ledger` bytes as `application/octet-stream` to compare saved records with the server |
+| `GET /api/me` | Current login and CSRF token |
+| `POST /api/register`, `POST /api/login`, `POST /api/logout` | Account/session operations |
+| `GET /api/ledgers` | Public ledger listing |
+| `GET /api/my-ledgers` | Own ledgers, or all for the administrator |
+| `POST /api/ledgers` | Create a ledger with its immutable field schema |
+| `GET /api/ledgers/ID` | Public block history and verification |
+| `GET /api/ledgers/ID/snapshot` | Encrypted chain download; `?block=N` selects one block |
+| `POST /api/ledgers/ID/validate-snapshot` | Compare an encrypted file with that ledger |
+| `GET /api/ledgers/ID/credentials` | Creator-only integration details |
+| `POST /api/ledgers/ID/rotate-token` | Creator-only token replacement |
+| `PATCH /api/ledgers/ID`, `DELETE /api/ledgers/ID` | Administrator metadata/state changes or deletion |
 
-This initial API binds to localhost for a trusted local demonstration. It is not
-a public authenticated result service. Nothing is deployed or port-forwarded.
+GFX integration needs a separate client adapter update for the new ledger ID,
+bearer token and HTTPS URL. The old Windows GFX uploader uses an unauthenticated
+HTTP endpoint and cannot automatically publish to this new API. This ledger
+upgrade does not change GFX gameplay or its source code.
 
-For a GFX host on another trusted LAN computer, explicitly listen on the network
-and allow the ledger address that the host will enter. Replace this example IP:
+## Snapshots and visible verification
 
-```powershell
-python server/app.py --bind 0.0.0.0 --port 8000 --allow-host 192.168.1.20
+Every ledger has its own randomly generated encryption key. All use the same
+vetted authenticated encryption algorithm, Fernet; independent keys provide
+isolation, rather than inventing a different encryption algorithm for each ledger.
+Keys stay server-side in PostgreSQL and are never returned to browsers or API
+clients. A snapshot from one ledger cannot be authenticated using another's key.
+
+Visitors can download the whole chain or one block. Uploading a `.ledger` file
+checks its authenticity, the saved hashes/links and its records against the
+current server. It does not import or overwrite anything.
+
+The chain's verification display distinguishes:
+
+- **Green — verified:** this block was in the saved file and matches.
+- **Red — changed/missing:** an authenticated saved record differs from current
+  history, is missing, or fails a hash/link check. The report identifies the index.
+- **Red, labelled not in snapshot:** this block was not included in the file,
+  such as a newer append. This is not evidence of tampering.
+
+A file that fails encryption authentication cannot reliably identify a changed
+block. It is reported as an untrusted/changed file without inventing an index.
+Comparison is refreshed or cleared when the ledger changes so old green results
+are not shown as a fresh verdict. Files are limited to 8 MiB.
+
+## PostgreSQL storage and backups
+
+`LEDGER_DATABASE_URL` selects a local PostgreSQL database. Shared tables hold
+accounts, sessions and the ledger registry. Each ledger gets separate block and
+secret-key tables, using server-generated identifiers rather than user-provided
+SQL names. Creating/deleting a ledger manages those tables transactionally.
+Appends are serialized for that ledger to avoid two blocks sharing the same index.
+
+The field schema is fixed in genesis. Verification checks block hashes, links,
+indexes, schema and duplicate record identifiers. Storage errors and inconsistent
+history are reported instead of silently resetting the ledger.
+
+Back up the complete database, including its encryption-key tables, using
+PostgreSQL backup tools. A source clone, frontend build or encrypted snapshot is
+not a substitute for that backup. Deleting keys or restoring unrelated keys makes
+older downloaded snapshots unreadable. Store database backups outside Git and
+limit who can read them.
+
+The old `server/data/chain.jsonl` and `snapshot.key` files are not automatically
+deleted or silently treated as PostgreSQL records. Keep them safe if migrating
+an older installation; do not assume old snapshots belong to a new ledger.
+
+Verify a PostgreSQL ledger without starting the website:
+
+```bash
+.venv/bin/python server/app.py --env-file .env --verify --ledger-id LEDGER_ID
 ```
 
-In the current GFX Windows client, open **Home > Connections**, set the game
-server address/TCP port, enable the optional blockchain ledger and enter ledger
-address `192.168.1.20` and port `8000`. Start both services, then choose
-**Validate and save**. GFX checks a game-server welcome and this ledger's
-`GET /api/checkpoint` response before saving the endpoints locally.
-After a timed match, the host can choose **Submit results** or **Not now**.
-No ledger submission prompt appears when the ledger is disabled. The result
-screen uses the saved endpoint rather than asking for it after every match.
-Repeat `--allow-host` for additional IPs or hostnames. The normal loopback address
-needs no extra flag. This is plain HTTP for trusted testing, without user accounts.
+The retained offline audit of an old JSON Lines ledger uses `--verify --data-dir
+PATH`. Do not use it as the new application's storage configuration.
 
-## Encrypted downloads
+## Development and checks
 
-Downloads use Fernet authenticated encryption. The algorithm is public; the secret
-key stays in `server/data/snapshot.key` (or your selected data directory). That key
-is never included in API responses or frontend assets and is ignored by Git.
-Keep a protected backup of it together with the ledger. Losing or changing the
-key makes older downloads unreadable by this server. An invalid key is not silently
-replaced.
+The project uses pinned frontend dependencies and Python requirements. Recreate
+the virtual environment on each machine rather than copying it between Windows
+and Ubuntu.
 
-A user can change bytes in a downloaded file, but changed files fail validation.
-Validation first checks the encrypted file's authenticity, then the saved hashes
-and links, and finally compares every saved record with the server's current
-record at that position. A complete-ledger download remains valid after newer
-blocks are appended; the response reports how many new blocks follow it. A
-single-block file checks that one record against the current valid server chain.
-Rewritten or missing saved history fails comparison. No validation call overwrites
-server data. Files are limited to 8 MiB; individual downloads help with larger
-ledgers.
-
-Encryption authenticates a server-issued download, not the truth of submitted
-scores. The trusted-server and external-checkpoint limitations still apply.
-
-## Storage and verification
-
-By default, records live in `server/data/chain.jsonl`, outside Git tracking.
-One UTF-8 JSON object is appended per line. The fixed genesis block is index 0;
-each submitted result adds one block after it. Never delete the data folder when
-replacing application files if you want to keep your history.
-
-Use a separate permanent location with:
+For frontend development, keep the Python server running locally, then:
 
 ```powershell
-python server/app.py --data-dir C:/GFXData/ledger
+npm.cmd --prefix frontend run dev
 ```
 
-Only one writer process may own that directory. Successful submission is
-acknowledged after flushing the record to storage. On restart, existing records
-are reused. A malformed or incomplete file is reported as invalid and blocks
-further appends; the application does not silently repair or replace it.
-
-Hashing uses the stored fields except `hash`: sorted object keys, compact JSON,
-UTF-8, and the restricted JSON types described above. Array order matters. This
-is our documented project format, not an implementation of RFC 8785/JCS.
-
-The verifier checks schema, exact genesis, indexes, repeated match IDs, each
-record's recalculated hash and every previous-hash link. Run it independently:
+Vite serves `http://127.0.0.1:5173` and proxies `/api` to port 8000. Keep the local
+settings from `.env.example` (`LEDGER_DEV_MODE=true`,
+`LEDGER_SECURE_COOKIES=false`, loopback bind and an HTTP public origin). Development
+mode explicitly permits the loopback Vite origins on port 5173. The deployed
+build uses one HTTPS origin and does not permit those development exceptions.
 
 ```powershell
-python server/app.py --verify
-python server/app.py --verify --data-dir C:/GFXData/ledger
-```
-
-The CLI is read-only and exits nonzero for an invalid or missing ledger.
-Export a checkpoint to retain a fingerprint elsewhere. Internal validity alone
-cannot reveal a fully rewritten chain or deletion of a complete final suffix;
-that needs comparison with a previously trusted external checkpoint.
-
-## Source map and checks
-
-```text
-frontend/src/      React screens, API calls and styles
-server/ledger.py   Familiar block/hash/verify functions and JSONL storage
-server/app.py      HTTP routes, static viewer serving, demo seeding and verification CLI
-server/snapshots.py  Server-only encryption key, downloads and file comparison
-server/test_ledger.py  Storage, verification and real HTTP tests using temporary data
-server/test_snapshots.py  Encrypted downloads, tampering and saved-history comparison tests
-```
-
-```powershell
-python -m unittest discover -s server -v
+.venv\Scripts\python.exe -m unittest discover -s server -v
 npm.cmd --prefix frontend run build
 ```
 
-The first normal run starts with genesis only. Demo records require --seed-demo.
-GFX's optional upload is initiated only by the lobby host after completion and
-sends the server's finalized JSON. Disabling GFX_ENABLE_LEDGER_UPLOAD at build
-time removes that client feature. There is no automatic dependency on a running
-ledger, and no changes to match simulation, combat or voice.
+PostgreSQL integration tests require a separate disposable database selected by
+`LEDGER_TEST_DATABASE_URL`; do not point it at a real deployment database. A
+skipped database test is not evidence that PostgreSQL behavior passed.
+
+Important source areas:
+
+```text
+frontend/src/          Public viewer, accounts, ledger creation and admin UI
+server/app.py          Authenticated PostgreSQL deployment entry point
+server/legacy_http.py  Old JSONL HTTP fixtures used only by regression tests
+server/web_app.py      HTTP/API routing, authorization and HTTPS configuration
+server/accounts.py    Password hashes, administrator bootstrap and browser sessions
+server/settings.py    Literal environment-file loading and origin configuration
+server/store.py        PostgreSQL ledger registry, per-ledger tables and append rules
+server/field_schema.py Immutable field definitions and submitted-data validation
+server/ledger.py       Canonical JSON, SHA-256 block/hash/verification helpers
+server/multi_snapshots.py  Per-ledger encrypted exports and visual comparison reports
+deploy/               Ubuntu preparation/start scripts and optional systemd unit
+```
+
+`.gitignore` excludes dependencies, builds, environment files, certificates/keys,
+local database dumps, legacy local data, downloaded snapshots and test output.
+Keep the tracked `.env.example` free of real credentials.

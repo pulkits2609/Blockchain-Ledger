@@ -1,0 +1,23 @@
+[Unit]
+Description=Blockchain Ledger website and API
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+# Create this unprivileged service account and adjust paths before installing.
+User=ledger
+Group=ledger
+WorkingDirectory=/opt/blockchainLedger
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/blockchainLedger/.venv/bin/python server/app.py --env-file /opt/blockchainLedger/.env
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
