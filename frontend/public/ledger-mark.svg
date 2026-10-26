@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <title>Ledger — linked records</title>
+  <rect width="64" height="64" rx="15" fill="#203F35"/>
+  <path d="M24 24h16M24 25l8 17 8-17" stroke="#8BB79A" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="12" y="12" width="17" height="17" rx="4" fill="#F4F2EB"/>
+  <rect x="35" y="12" width="17" height="17" rx="4" fill="#F4F2EB"/>
+  <rect x="23.5" y="36" width="17" height="17" rx="4" fill="#B8D6AA"/>
+  <path d="m28.5 44.5 2.5 2.5 4.5-5" stroke="#203F35" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

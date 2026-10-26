@@ -147,3 +147,5 @@ summary { cursor: pointer; }
   .toolbar .button-row { width: 100%; }
 }
 .missing-record { border: 1px solid #b66c60; background: #f6e1da; color: #923d32; padding: 18px; border-radius: 4px; }
+.brand-heading { display: flex; align-items: center; gap: 14px; }
+.brand-heading img { flex-shrink: 0; }

@@ -59,7 +59,7 @@ export default function App() {
     </nav>
     {error && <p className="notice warning" role="alert">{error}</p>}
     {page === 'home' && <section className="welcome">
-      <h1>Ledger</h1><p>Explore linked records, or sign in to create your own ledger.</p>
+      <h1 className="brand-heading"><img src="/ledger-mark.svg" width="48" height="48" alt=""/>Ledger</h1><p>Explore linked records, or sign in to create your own ledger.</p>
       <div className="welcome-options">
         <button onClick={() => navigate('browse')}><strong>View ledgers</strong><span>Browse public records and check a saved snapshot. No account needed.</span></button>
         <button disabled={sessionLoading} onClick={() => navigate(user ? 'manage' : 'account')}><strong>{user ? 'My ledgers' : 'Log in / Create account'}</strong><span>Create a ledger with your own block structure and a private write token.</span></button>
