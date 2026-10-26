@@ -120,7 +120,7 @@ def verify_block(block):
     return True
 
 
-def verify_chain(blocks, initial_errors=None):
+def verify_chain(blocks, initial_errors=None, genesis=None):
     errors = list(initial_errors or [])
     seen_ids = set()
     if not blocks:
@@ -130,7 +130,7 @@ def verify_chain(blocks, initial_errors=None):
             verify_block(block)
             if block["index"] != index:
                 raise ValueError("Block index does not match its position")
-            if index == 0 and block != create_genesis_block():
+            if index == 0 and block != (genesis if genesis is not None else create_genesis_block()):
                 raise ValueError("Genesis does not match the prescribed genesis block")
             if block["match_id"] in seen_ids:
                 raise ValueError("Duplicate match_id")
