@@ -71,50 +71,43 @@ Requirements:
 
 Create the PostgreSQL role and database once using pgAdmin or PostgreSQL's tools.
 Use a normal login role that owns the application database, not a PostgreSQL
-superuser. Then, from this project directory:
+superuser. Then double-click **Start Ledger.bat** or run:
 
 ```powershell
-Copy-Item .env.example .env
+& ".\Start Ledger.bat"
 ```
 
-Edit `.env`: set `LEDGER_DATABASE_URL` to the local database and its password.
-Percent-encode reserved URL characters in the password. The example's
-`CHANGE_ME` is a placeholder. Keep `.env` private; it is ignored by Git.
-Explicit process environment variables take priority over values in `.env`.
+The launcher creates/reuses `.venv`, installs Python requirements, runs `npm ci`
+and rebuilds the React viewer **every time**, including after a Git pull. It then
+asks which startup command to run:
 
-For first-time administrator creation only, set `LEDGER_ADMIN_USERNAME` and
-`LEDGER_ADMIN_PASSWORD` in `.env`, then run:
+1. Start the website/API using `.env`.
+2. Initialize the single administrator; prompts for a username and hidden password.
+3. Check the PostgreSQL connection.
+4. Start with the four demo records; asks for the existing admin username.
+5. Supply additional server flags, such as `--port 8443`.
+0. Exit.
 
-```powershell
-.\Start Ledger.bat --init-admin
-```
+On first run without `.env`, a short wizard asks for local PostgreSQL credentials
+and local-HTTP or certificate-based HTTPS settings. Passwords are hidden and the
+database password is URL-encoded automatically. Alternatively, choose to copy
+`.env.example`, edit it and rerun. Existing `.env` files are never overwritten.
+Explicit process environment variables still take priority over `.env` values.
 
-This prepares `.venv`, installs pinned Python requirements, builds the viewer if
-its build is missing, checks PostgreSQL and runs the requested command. Remove
-`LEDGER_ADMIN_PASSWORD` from `.env` after initialization. Ordinary startup does not
-overwrite the administrator or reset its password.
-Usernames use 3–32 letters, numbers, underscores or hyphens; passwords contain
-12–128 characters.
+Choose **2** once to create the administrator, then **1** to start. The menu does
+not save the admin password. Existing administrator passwords are never reset by
+initialization. Usernames use 3–32 letters, numbers, underscores or hyphens;
+passwords contain 12–128 characters. Stop the running website with Ctrl+C.
 
-Start the website by double-clicking **Start Ledger.bat** or running:
+For automation, passing server flags bypasses the menu; configure `.env` first.
+For example, `& ".\Start Ledger.bat" --check-db` runs only the requested command
+after building. `--build-only` prepares dependencies/assets without starting the
+server or requiring database configuration. Custom input is parsed as server
+arguments, not evaluated as a shell command. Keep secrets in `.env`.
+When changing the public host/port, update `--public-origin` or `.env` to match.
 
-```powershell
-.\Start Ledger.bat
-```
-
-For local development the example configuration serves
-`http://127.0.0.1:8000`. The Python process serves both the built React viewer and
-the API. Stop it with Ctrl+C. After frontend changes, rebuild explicitly:
-
-```powershell
-npm.cmd --prefix frontend ci
-npm.cmd --prefix frontend run build
-```
-
-The separate **Start Demo Ledger.bat** launcher requests explicit demo seeding.
-Set `LEDGER_ADMIN_USERNAME` to the initialized administrator's name first. It
-creates the designated demo ledger only if absent; normal startup inserts no
-sample results and does not need administrator credentials in the environment.
+**Start Demo Ledger.bat** remains available for noninteractive demo startup when
+`LEDGER_ADMIN_USERNAME` is configured. Normal startup adds no demo records.
 
 ## Local setup on Ubuntu
 
@@ -134,32 +127,24 @@ the shell command; these commands do not replace an existing role/database:
 ```bash
 sudo -u postgres createuser --pwprompt ledger_app
 sudo -u postgres createdb --owner=ledger_app blockchain_ledger
-cp .env.example .env
-chmod 600 .env
 ```
 
-Edit `.env` with the same role password and database name, then run setup as your
-ordinary user:
+After pulling the repository on Ubuntu or a 64-bit Raspberry Pi installation,
+run this one command as your ordinary user:
 
 ```bash
-bash deploy/setup-ubuntu.sh
-```
-
-Setup creates a project virtual environment, installs pinned Python dependencies,
-runs `npm ci` and builds the viewer, then checks PostgreSQL. It does not install
-system packages, change PostgreSQL users or replace data.
-
-Set the first administrator username/password in `.env`, initialize once, and
-remove its password from the environment file afterward:
-
-```bash
-.venv/bin/python server/app.py --env-file .env --init-admin
 bash deploy/start-ubuntu.sh
 ```
 
-After pulling application updates, run `bash deploy/setup-ubuntu.sh` again to
-reinstall locked dependencies and rebuild. The start script runs setup only if
-the virtual environment or frontend build is missing.
+It builds everything and opens the same first-time configuration and startup
+menu as Windows. Newly generated `.env` files have owner-only permissions on
+Ubuntu. HTTPS mode asks for your public origin and existing certificate/key paths.
+The launcher does not install system packages or replace PostgreSQL users/data.
+
+Use that same command after each pull; an existing build is always refreshed.
+`bash deploy/setup-ubuntu.sh` remains a build-only shortcut. For automation use
+`bash deploy/start-ubuntu.sh --check-db` or other explicit server flags; the
+systemd unit starts the prepared application directly without an interactive menu.
 
 ## HTTPS with your certificate
 
