@@ -247,4 +247,7 @@ def main():
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # Keep the old file-ledger helpers importable for offline verification/tests.
+    # Normal deployment always uses the PostgreSQL application; there is no write fallback.
+    from web_app import main as run_application
+    raise SystemExit(run_application())
