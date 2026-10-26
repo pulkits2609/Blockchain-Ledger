@@ -7,6 +7,30 @@ import ledger code or need the ledger to play a match.
 This is a centralized, single-writer ledger. Hash verification checks consistency;
 it does not prove who submitted a result or stop an owner rebuilding history.
 
+## What is included
+
+- Python API that appends submitted JSON results to a persistent SHA-256-linked chain.
+- Deterministic genesis, canonical serialization, duplicate-result handling and
+  independent hash/link verification after restart.
+- Minimal React viewer with a live wrapping chain, hover animation and expandable,
+  read-only block details.
+- Encrypted whole-ledger or individual-block downloads and comparison of an older
+  downloaded file against the current server history.
+- Chain-head export, four optional demo matches, Windows launchers and automated
+  storage, HTTP, verification and encrypted-snapshot tests.
+- Optional integration with GFX through HTTP; the ledger also runs independently.
+
+## Repository and local data
+
+The repository contains the Python server, React source, dependency lockfile,
+launchers and tests. Install dependencies and build the frontend after cloning.
+Generated builds, dependencies, local environment files, test output and downloaded
+snapshots are excluded by `.gitignore`.
+
+Live records and the private snapshot key belong in `server/data/` by default and
+are also excluded from Git. Back up this directory separately; a source-code clone
+does not restore your saved ledger or make old encrypted downloads readable.
+
 ## Start the viewer
 
 Requirements: Python 3.11+ and Node.js 22.12+ for building the frontend.
@@ -113,7 +137,14 @@ and allow the ledger address that the host will enter. Replace this example IP:
 python server/app.py --bind 0.0.0.0 --port 8000 --allow-host 192.168.1.20
 ```
 
-Use ledger address `192.168.1.20` and port `8000` in GFX's host-only results panel.
+In the current GFX Windows client, open **Home > Connections**, set the game
+server address/TCP port, enable the optional blockchain ledger and enter ledger
+address `192.168.1.20` and port `8000`. Start both services, then choose
+**Validate and save**. GFX checks a game-server welcome and this ledger's
+`GET /api/checkpoint` response before saving the endpoints locally.
+After a timed match, the host can choose **Submit results** or **Not now**.
+No ledger submission prompt appears when the ledger is disabled. The result
+screen uses the saved endpoint rather than asking for it after every match.
 Repeat `--allow-host` for additional IPs or hostnames. The normal loopback address
 needs no extra flag. This is plain HTTP for trusted testing, without user accounts.
 
@@ -182,6 +213,7 @@ server/ledger.py   Familiar block/hash/verify functions and JSONL storage
 server/app.py      HTTP routes, static viewer serving, demo seeding and verification CLI
 server/snapshots.py  Server-only encryption key, downloads and file comparison
 server/test_ledger.py  Storage, verification and real HTTP tests using temporary data
+server/test_snapshots.py  Encrypted downloads, tampering and saved-history comparison tests
 ```
 
 ```powershell
