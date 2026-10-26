@@ -98,6 +98,45 @@ class SnapshotComparisonTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "another ledger"):
             other_ledger.validate(token)
 
+    def test_missing_middle_block_does_not_rename_a_later_block(self):
+        self.store.blocks.append(create_new_block(self.store.blocks[-1], {"match_id": "two", "data": {"score": 8}}))
+        token, _ = self.service.export()
+        del self.store.blocks[1]
+        report = self.service.validate(token)
+        self.assertFalse(report["valid"])
+        statuses = {entry["index"]: entry for entry in report["block_statuses"]}
+        self.assertEqual(statuses[0]["status"], "verified")
+        self.assertIn("missing", statuses[1]["message"])
+        self.assertEqual(statuses[2]["status"], "changed")
+        self.assertNotIn("missing", statuses[2]["message"])
+        self.assertEqual(report["new_blocks"], 0)
+
+    def test_duplicate_current_index_never_receives_a_verified_status(self):
+        token, _ = self.service.export()
+        self.store.blocks[1]["index"] = 0
+        report = self.service.validate(token)
+        self.assertFalse(report["valid"])
+        statuses = {entry["index"]: entry for entry in report["block_statuses"]}
+        self.assertEqual(statuses[0]["status"], "changed")
+        self.assertIn("claims this block index", statuses[0]["message"])
+        self.assertIn("missing", statuses[1]["message"])
+        self.assertFalse(any(entry["status"] == "verified" for entry in report["block_statuses"]))
+
+    def test_malformed_current_indices_are_not_used_as_verified_identities(self):
+        token, _ = self.service.export()
+        original = copy.deepcopy(self.store.blocks)
+        for malformed in (None, True, -1, 1.5, "1", [], {}, 9007199254740992):
+            with self.subTest(index=malformed):
+                self.store.blocks = copy.deepcopy(original)
+                self.store.blocks[1]["index"] = malformed
+                report = self.service.validate(token)
+                self.assertFalse(report["valid"])
+                statuses = {entry["index"]: entry for entry in report["block_statuses"]}
+                self.assertEqual(statuses[0]["status"], "verified")
+                self.assertEqual(statuses[1]["status"], "changed")
+                self.assertIn("missing", statuses[1]["message"])
+                self.assertTrue(any(error["index"] is None for error in report["errors"]))
+
 
 @unittest.skipUnless(os.environ.get("LEDGER_TEST_DATABASE_URL"), "Set LEDGER_TEST_DATABASE_URL to run PostgreSQL tests")
 class PostgreSQLStoreTests(unittest.TestCase):
@@ -239,6 +278,21 @@ class PostgreSQLStoreTests(unittest.TestCase):
                                .format(sql.Identifier(table_names(ledger_id)[0])), (Jsonb(blocks[1]),))
         self.assertTrue(self.store.read(ledger_id)["verification"]["valid"])
         self.assertFalse(service.validate(token)["valid"])
+
+    def test_middle_database_row_deletion_preserves_later_block_identity(self):
+        created = self.create()
+        ledger_id = created["ledger"]["id"]
+        service = SnapshotService(self.store, ledger_id)
+        self.append(created)
+        self.append(created, "record-2", 8)
+        token, _ = service.export()
+        with self.store.connect() as connection:
+            connection.execute(sql.SQL("DELETE FROM {} WHERE position = 1").format(sql.Identifier(table_names(ledger_id)[0])))
+        report = service.validate(token)
+        self.assertFalse(report["valid"])
+        statuses = {entry["index"]: entry for entry in report["block_statuses"]}
+        self.assertIn("missing", statuses[1]["message"])
+        self.assertNotIn("missing", statuses[2]["message"])
 
 
 if __name__ == "__main__":

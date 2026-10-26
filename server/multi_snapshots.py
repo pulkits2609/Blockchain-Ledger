@@ -93,13 +93,39 @@ class SnapshotService:
                 validate_data(saved[0]["data"], metadata["fields"])
 
         current = view["blocks"]
-        errors = list(view["verification"]["errors"])
+        # A missing middle row shifts list positions, but does not renumber later blocks.
+        current_by_index = {}
+        position_indices = []
+        duplicates = set()
+        errors = []
+        for position, block in enumerate(current):
+            index = block.get("index") if isinstance(block, dict) else None
+            if type(index) is not int or not 0 <= index <= 9007199254740991:
+                position_indices.append(None)
+                errors.append({"index": None, "message": "Stored position " + str(position) + " has no usable block index."})
+                continue
+            position_indices.append(index)
+            if index in current_by_index:
+                duplicates.add(index)
+            else:
+                current_by_index[index] = block
+        # The chain verifier reports positions; the viewer labels cards by their stored index.
+        for error in view["verification"]["errors"]:
+            position = error["index"]
+            index = None
+            message = error["message"]
+            if type(position) is int and 0 <= position < len(position_indices):
+                index = position_indices[position]
+                message = "Stored position " + str(position) + ": " + message
+            errors.append({"index": index, "message": message})
+        for index in duplicates:
+            errors.append({"index": index, "message": "More than one current record claims this block index."})
         saved_by_index = {block["index"]: block for block in saved}
         statuses = []
         findings = {}
         for error in errors:
             findings.setdefault(error["index"], []).append(error["message"])
-        for index, block in enumerate(current):
+        for index, block in current_by_index.items():
             status = "not_in_snapshot"
             message = "This block is not present in the downloaded snapshot; it has not been verified by this file."
             if index in saved_by_index:
@@ -118,14 +144,15 @@ class SnapshotService:
                 status = "changed"
                 message = "Current ledger verification failed: " + "; ".join(findings[index])
             statuses.append({"index": index, "status": status, "message": message})
-        for index in sorted(set(saved_by_index) - set(range(len(current)))):
-            message = "This snapshot block is missing from the current ledger."
+        for index in sorted(set(saved_by_index) - set(current_by_index)):
+            message = "No current block with this saved index could be identified; it is missing or its index was changed."
             errors.append({"index": index, "message": message})
             statuses.append({"index": index, "status": "changed", "message": message})
+        statuses.sort(key=lambda entry: entry["index"])
         valid = not errors
         return {"valid": valid, "kind": snapshot["kind"], "ledger_id": self.ledger_id,
                 "checked_blocks": len(saved), "server_blocks": len(current),
-                "new_blocks": max(0, len(current) - saved[-1]["index"] - 1),
+                "new_blocks": sum(index > saved[-1]["index"] for index in current_by_index),
                 "errors": errors, "block_statuses": statuses, "snapshot_blocks": saved,
                 "compared_head": view["verification"]["head_hash"],
                 "message": "Downloaded records match the current ledger." if valid
